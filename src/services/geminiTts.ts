@@ -127,7 +127,10 @@ export async function generateGeminiSpeech(text: string, language: string): Prom
   const audio = findAudio(json);
   if (!audio?.data) throw new Error('Gemini TTS returned no audio.');
 
-  let data = new Uint8Array(Buffer.from(audio.data, 'base64'));
+  // Explicitly widen the typed-array backing buffer type. TypeScript 7 can infer
+  // Buffer-backed Uint8Array values as Uint8Array<ArrayBuffer> while helpers
+  // return Uint8Array<ArrayBufferLike>, which otherwise makes this reassignment fail.
+  let data: Uint8Array = new Uint8Array(Buffer.from(audio.data, 'base64'));
   const mime = audio.mime_type ?? 'audio/mp3';
 
   // Prefer compressed MP3 to keep Discord attachments small. If Gemini returns
