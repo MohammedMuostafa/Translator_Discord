@@ -120,6 +120,15 @@ Press it to hear the translated text.
 
 ---
 
+## 📚 Documentation
+
+- Setup guide (Arabic): [`docs/guides/setup-ar.md`](docs/guides/setup-ar.md)
+- Changelog / upgrade archive index: [`docs/CHANGELOG.md`](docs/CHANGELOG.md)
+- Privacy policy: [`docs/privacy.html`](docs/privacy.html)
+- Terms of service: [`docs/terms.html`](docs/terms.html)
+
+---
+
 <div align="center">
 
 ### 🌐 Translate naturally. Chat globally.

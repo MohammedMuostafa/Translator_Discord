@@ -324,7 +324,7 @@ export function registerAdminDashboard(app: Express): void {
 
   router.get('/', (req, res) => {
     if (!adminEnabled()) {
-      res.status(503).send('Admin dashboard is not configured. See UPGRADE-V3.9-AR.md.');
+      res.status(503).send('Admin dashboard is not configured. See docs/CHANGELOG.md.');
       return;
     }
     const session = decodeSession(parseCookies(req)[SESSION_COOKIE]);
