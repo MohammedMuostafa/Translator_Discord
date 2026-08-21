@@ -1,6 +1,6 @@
 <div align="center">
 
-<img width="540" height="540" alt="ChatGPT Image Aug 21, 2026, 03_45_09 PM" src="https://github.com/user-attachments/assets/774b6c02-6b5c-43c6-8b2e-573bfa603e46" />
+<img width="350" height="350" alt="ChatGPT Image Aug 21, 2026, 03_45_09 PM" src="https://github.com/user-attachments/assets/774b6c02-6b5c-43c6-8b2e-573bfa603e46" />
 
 # 🌍 Translator Discord
 
