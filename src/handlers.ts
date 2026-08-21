@@ -39,6 +39,52 @@ function safeCodeBlock(text: string): string {
   return text.replaceAll('```', 'ˋˋˋ');
 }
 
+const RLI = '\u2067';
+const LRI = '\u2066';
+const PDI = '\u2069';
+
+function isRtlLanguage(code: string): boolean {
+  const normalized = normalizeLanguage(code, true);
+  return normalized === 'ar-eg' || normalized === 'ar-msa' || normalized === 'fa' || normalized === 'he';
+}
+
+/**
+ * Discord follows the Unicode bidi algorithm, but mixed Arabic/Persian + Latin
+ * text can still jump around visually. Isolate LTR runs, then isolate the whole
+ * paragraph as RTL. This keeps URLs, product names and English phrases readable.
+ */
+function stabilizeRtlParagraph(text: string): string {
+  const isolatedLtr = text.replace(
+    /((?:https?:\/\/|www\.)[^\s<>]+|[A-Za-z0-9][A-Za-z0-9 ._:/@#%+&?=,()'\-]*[A-Za-z0-9])/g,
+    `${LRI}$1${PDI}`
+  );
+  return `${RLI}${isolatedLtr}${PDI}`;
+}
+
+function directionalText(text: string, language: string): string {
+  if (!isRtlLanguage(language)) return text;
+  return text
+    .split('\n')
+    .map((line) => (line.trim() ? stabilizeRtlParagraph(line) : ''))
+    .join('\n');
+}
+
+function readableTranslation(text: string, language: string): string {
+  const directed = directionalText(text, language);
+  const paragraphs = directed.split(/\n{2,}/);
+
+  // Discord does not expose arbitrary font sizing to apps. Markdown level-3
+  // headings are the closest supported way to make translated text larger.
+  return paragraphs
+    .map((paragraph) =>
+      paragraph
+        .split('\n')
+        .map((line) => (line.trim() ? `### ${line}` : ''))
+        .join('\n')
+    )
+    .join('\n\n');
+}
+
 function formatTranslation(
   input: string,
   translated: string,
@@ -48,7 +94,14 @@ function formatTranslation(
 ): string {
   const source = detectedSource && detectedSource !== 'auto' ? ` • detected: ${languageLabel(detectedSource)}` : '';
   const engine = provider ? ` • ${provider}` : '';
-  return clipDiscord(`🌐 **${languageLabel(target)}**${source}${engine}\n${translated}\n\n> ${clipDiscord(input, 500)}`);
+  const output = readableTranslation(translated, target);
+  const original = directionalText(clipDiscord(input, 500), detectedSource ?? 'auto');
+
+  return clipDiscord(
+    `## 🌐 ${languageLabel(target)}${source}${engine}\n\n` +
+      `${output}\n\n` +
+      `**Original**\n> ${original.replaceAll('\n', '\n> ')}`
+  );
 }
 
 function formatCopyTranslation(
@@ -58,8 +111,12 @@ function formatCopyTranslation(
   provider?: string
 ): string {
   const source = detectedSource && detectedSource !== 'auto' ? ` • detected: ${languageLabel(detectedSource)}` : '';
+  const preview = readableTranslation(translated, target);
+
   return clipDiscord(
-    `✍️ **Copy & send as yourself — ${languageLabel(target)}${source}${provider ? ` • ${provider}` : ''}:**\n\n` +
+    `## ✍️ Copy & send as yourself — ${languageLabel(target)}${source}${provider ? ` • ${provider}` : ''}\n\n` +
+      `${preview}\n\n` +
+      `**Copy text:**\n` +
       `\`\`\`text\n${safeCodeBlock(translated)}\n\`\`\`\n` +
       `Paste it into Discord and press Send so the message is authored by your own account.`
   );

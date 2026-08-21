@@ -1,4 +1,4 @@
-# Discord User Translator v3.2
+# Discord User Translator v3.3
 
 A user-installed Discord translator focused on AI auto-detection, Egyptian Arabic, Modern Standard Arabic, Persian, and fast target selection.
 
@@ -11,4 +11,9 @@ A user-installed Discord translator focused on AI auto-detection, Egyptian Arabi
 - AI/Gemini can distinguish Egyptian Arabic (`ar-eg`) vs MSA (`ar-msa`) and honor target dialect.
 - AI retries temporary 429/5xx errors; Auto mode can fall back to LibreTranslate.
 
-See `UPGRADE-V3.2-AR.md` for Arabic upgrade instructions.
+See `UPGRADE-V3.3-AR.md` for the RTL/readability update and `UPGRADE-V3.2-AR.md` for the auto-detection upgrade.
+
+
+## RTL readability
+
+Arabic, Egyptian Arabic, Modern Standard Arabic, Persian and Hebrew output uses Unicode bidi isolation so embedded English product names, acronyms and URLs stay in the correct left-to-right order inside right-to-left text. Translation output is also displayed using Discord-supported heading formatting for better readability.

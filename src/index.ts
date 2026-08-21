@@ -26,7 +26,7 @@ app.disable('x-powered-by');
 const statusPayload = () => ({
   ok: true,
   service: 'discord-user-translator',
-  version: '3.2.0',
+  version: '3.3.0',
   interactionEndpoint: '/interactions',
   translationProvider: env.TRANSLATION_PROVIDER,
   aiConfigured: aiConfigured(),
@@ -141,7 +141,7 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
 });
 
 app.listen(env.PORT, env.HOST, () => {
-  console.log(`Discord User Translator v3.2 listening on ${env.HOST}:${env.PORT}`);
+  console.log(`Discord User Translator v3.3 listening on ${env.HOST}:${env.PORT}`);
   console.log('Interactions endpoint: /interactions');
 
   if (env.REGISTER_COMMANDS_ON_START && env.DISCORD_BOT_TOKEN) {
