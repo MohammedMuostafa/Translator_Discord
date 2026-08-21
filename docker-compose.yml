@@ -1,0 +1,36 @@
+services:
+  translator:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      - libretranslate
+      - stt
+
+  libretranslate:
+    image: libretranslate/libretranslate:latest
+    restart: unless-stopped
+    environment:
+      LT_LOAD_ONLY: ar,en,fr,de,es,it,pt,ru,tr,nl,pl,zh,ja,ko,hi,id,vi
+    volumes:
+      - libretranslate_models:/home/libretranslate/.local
+
+  stt:
+    build: ./python-stt
+    restart: unless-stopped
+    environment:
+      STT_API_KEY: ${STT_API_KEY:-change-me}
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      MAX_AUDIO_BYTES: ${MAX_AUDIO_BYTES:-15728640}
+    volumes:
+      - whisper_cache:/root/.cache/huggingface
+
+volumes:
+  libretranslate_models:
+  whisper_cache:
