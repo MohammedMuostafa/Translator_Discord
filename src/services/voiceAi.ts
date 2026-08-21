@@ -28,8 +28,7 @@ const OpusScript: any = require('opusscript');
 type LiveSessionLike = {
   sendRealtimeInput(params: {
     audio?: { data: string; mimeType: string };
-    activityStart?: Record<string, never>;
-    activityEnd?: Record<string, never>;
+    audioStreamEnd?: boolean;
   }): void;
   close(): void;
 };
@@ -293,12 +292,16 @@ async function connectGeminiLive(session: VoiceAiSession): Promise<void> {
       },
       inputAudioTranscription: {},
       outputAudioTranscription: {},
-      // Discord already tells us when the owner starts/stops speaking. Using
-      // explicit VAD avoids waiting for a second independent server-side VAD.
-      explicitVadSignal: true,
+      // Hybrid VAD:
+      // - Gemini keeps automatic speech-start detection enabled, avoiding
+      //   clipped first words.
+      // - Discord detects when the user stops speaking and immediately sends
+      //   audioStreamEnd, bypassing a second server-side silence wait.
       realtimeInputConfig: {
         automaticActivityDetection: {
-          disabled: true
+          disabled: false,
+          prefixPaddingMs: 20,
+          silenceDurationMs: Math.max(100, env.VOICE_AI_SILENCE_MS)
         }
       }
     }
@@ -325,14 +328,6 @@ function attachLiveReceiver(session: VoiceAiSession): void {
     session.inputTranscript = '';
     session.outputTranscript = '';
 
-    try {
-      session.live.sendRealtimeInput({ activityStart: {} });
-    } catch (error) {
-      session.capturing = false;
-      console.error('Gemini Live activityStart error:', error);
-      return;
-    }
-
     const opusStream = receiver.subscribe(speakerId, {
       end: {
         behavior: EndBehaviorType.AfterSilence,
@@ -356,10 +351,13 @@ function attachLiveReceiver(session: VoiceAiSession): void {
       try { decoder.delete(); } catch { /* no-op */ }
 
       try {
-        session.live?.sendRealtimeInput({ activityEnd: {} });
+        // Hybrid VAD fast-finalization signal supported by the Gemini
+        // Developer Live API. This tells Gemini the microphone turn ended
+        // immediately, without waiting for server-side silence detection.
+        session.live?.sendRealtimeInput({ audioStreamEnd: true });
         session.busy = true;
       } catch (error) {
-        console.error('Gemini Live activityEnd error:', error);
+        console.error('Gemini Live audioStreamEnd error:', error);
       }
     };
 
