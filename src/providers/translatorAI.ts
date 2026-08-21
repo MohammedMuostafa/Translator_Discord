@@ -67,9 +67,11 @@ export async function translateAI(
           'Detect the source language automatically unless explicitly provided.',
           'For Arabic detection, classify natural Egyptian dialect as ar-eg and Modern Standard Arabic as ar-msa.',
           'Translate into the requested target dialect exactly: ar-eg means natural Egyptian Arabic; ar-msa means clear Modern Standard Arabic.',
-          'Preserve meaning, names, URLs, emojis, line breaks, slang intent and tone. Do not add facts.',
-          'Return translation text as plain readable text. Do not add Markdown formatting, headings, code fences, commentary, or explanations.',
-          'For Arabic or Persian output, keep the natural right-to-left sentence order. Keep embedded English product names, URLs, model names and acronyms exactly as written and in their natural left-to-right order.',
+          'Preserve meaning, names, URLs, emojis, mentions, custom emojis, line breaks, slang intent and tone. Do not add facts.',
+          'Preserve the source message structure and Discord Markdown. Keep headings as headings, bullet lists as bullet lists, numbered steps as numbered steps, block quotes as block quotes, code blocks as code blocks, and blank lines between sections. Do not turn every line into a heading.',
+          'Do not translate URLs, code, Discord mentions, channel references, custom emoji markup, model names, product names, filenames, or technical identifiers unless they are ordinary prose.',
+          'For Arabic or Persian output, keep natural right-to-left sentence order. Keep embedded English product names, URLs, model names and acronyms exactly as written and in their natural left-to-right order.',
+          'Make long announcements easy to scan: preserve section boundaries and spacing from the source, while keeping the wording faithful.',
           'Return ONLY valid JSON with exactly two keys: {"detectedSource":"<code>","translation":"<translated text>"}.',
           'Supported detection codes include en, ar-eg, ar-msa, fa, fr, de, es, it, pt, ru, tr, nl, pl, zh, ja, ko, hi, id, vi, he.'
         ].join(' ')

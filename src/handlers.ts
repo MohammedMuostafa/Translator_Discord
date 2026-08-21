@@ -1,5 +1,5 @@
 import type { DiscordAttachment, DiscordInteraction, DiscordMessage } from './types.js';
-import { clipDiscord, editOriginalResponse } from './discord.js';
+import { clipDiscord, editOriginalResponse, editOriginalResponseWithFile } from './discord.js';
 import { languageLabel, normalizeLanguage, targetSelectOptions } from './languages.js';
 import {
   aiConfigured,
@@ -12,6 +12,8 @@ import { env } from './config.js';
 import { transcribeDiscordAttachment } from './services/stt.js';
 import { getPreference, updatePreference } from './storage/preferences.js';
 import { createTranslationSession, getTranslationSession } from './services/translationSessions.js';
+import { createSpeechSession, getSpeechSession } from './services/speechSessions.js';
+import { generateGeminiSpeech, geminiTtsConfigured } from './services/geminiTts.js';
 
 function userIdOf(interaction: DiscordInteraction): string {
   const id = interaction.member?.user?.id ?? interaction.user?.id;
@@ -48,41 +50,99 @@ function isRtlLanguage(code: string): boolean {
   return normalized === 'ar-eg' || normalized === 'ar-msa' || normalized === 'fa' || normalized === 'he';
 }
 
-/**
- * Discord follows the Unicode bidi algorithm, but mixed Arabic/Persian + Latin
- * text can still jump around visually. Isolate LTR runs, then isolate the whole
- * paragraph as RTL. This keeps URLs, product names and English phrases readable.
- */
-function stabilizeRtlParagraph(text: string): string {
-  const isolatedLtr = text.replace(
-    /((?:https?:\/\/|www\.)[^\s<>]+|[A-Za-z0-9][A-Za-z0-9 ._:/@#%+&?=,()'\-]*[A-Za-z0-9])/g,
-    `${LRI}$1${PDI}`
+function protectDirectionalTokens(text: string): { text: string; restore: (value: string) => string } {
+  const protectedValues: string[] = [];
+  const protect = (value: string): string => {
+    const index = protectedValues.push(value) - 1;
+    return String.fromCharCode(0xe000 + index);
+  };
+
+  // Keep code, URLs and Discord markup byte-for-byte intact so bidi helpers do
+  // not break links, mentions, custom emojis or inline code.
+  let value = text
+    .replace(/`[^`\n]+`/g, protect)
+    .replace(/https?:\/\/[^\s<>)]+/g, protect)
+    .replace(/www\.[^\s<>)]+/g, protect)
+    .replace(/<(?:(?:@!?|#|@&)?\d+|a?:[^:>]+:\d+)>/g, protect);
+
+  // Isolate consecutive Latin/number runs such as "Wilder World", "4K 1080p"
+  // or "Infinity Rising" while leaving Arabic/Persian sentence order intact.
+  value = value.replace(
+    /(?:[A-Za-z0-9][A-Za-z0-9._:/@#%+&?=,'()\-]*)(?:[ \t]+(?:[A-Za-z0-9][A-Za-z0-9._:/@#%+&?=,'()\-]*))*/g,
+    `${LRI}$&${PDI}`
   );
-  return `${RLI}${isolatedLtr}${PDI}`;
+
+  return {
+    text: value,
+    restore: (current: string) =>
+      current.replace(/[\ue000-\uf8ff]/g, (placeholder) => {
+        const index = placeholder.charCodeAt(0) - 0xe000;
+        return protectedValues[index] ?? placeholder;
+      })
+  };
 }
 
-function directionalText(text: string, language: string): string {
-  if (!isRtlLanguage(language)) return text;
+function splitMarkdownPrefix(line: string): { prefix: string; body: string } {
+  const patterns = [
+    /^(\s{0,3}#{1,3}\s+)/,
+    /^(\s*>\s?)/,
+    /^(\s*[-*+]\s+(?:\[[ xX]\]\s+)?)/,
+    /^(\s*\d+[.)]\s+)/
+  ];
+
+  for (const pattern of patterns) {
+    const match = line.match(pattern);
+    if (match?.[1]) return { prefix: match[1], body: line.slice(match[1].length) };
+  }
+  return { prefix: '', body: line };
+}
+
+function stabilizeRtlMarkdown(text: string): string {
+  let inCodeFence = false;
+
   return text
     .split('\n')
-    .map((line) => (line.trim() ? stabilizeRtlParagraph(line) : ''))
+    .map((line) => {
+      if (/^\s*```/.test(line)) {
+        inCodeFence = !inCodeFence;
+        return line;
+      }
+      if (inCodeFence || !line.trim()) return line;
+
+      const { prefix, body } = splitMarkdownPrefix(line);
+      const protectedBody = protectDirectionalTokens(body);
+      return `${prefix}${RLI}${protectedBody.restore(protectedBody.text)}${PDI}`;
+    })
     .join('\n');
 }
 
-function readableTranslation(text: string, language: string): string {
-  const directed = directionalText(text, language);
-  const paragraphs = directed.split(/\n{2,}/);
+function directionalText(text: string, language: string): string {
+  return isRtlLanguage(language) ? stabilizeRtlMarkdown(text) : text;
+}
 
-  // Discord does not expose arbitrary font sizing to apps. Markdown level-3
-  // headings are the closest supported way to make translated text larger.
-  return paragraphs
-    .map((paragraph) =>
-      paragraph
-        .split('\n')
-        .map((line) => (line.trim() ? `### ${line}` : ''))
-        .join('\n')
-    )
-    .join('\n\n');
+function normalizedTranslation(text: string, language: string): string {
+  // Preserve Discord Markdown produced by the AI. Only normalize excessive blank
+  // lines and bidi direction; do not promote every line to a heading.
+  const normalized = text.replace(/\n{3,}/g, '\n\n').trim();
+  return directionalText(normalized, language);
+}
+
+function buildListenComponents(userId: string, translated: string, target: string): Array<Record<string, unknown>> {
+  if (!geminiTtsConfigured()) return [];
+  const sessionId = createSpeechSession(userId, translated, target);
+  return [
+    {
+      type: 1,
+      components: [
+        {
+          type: 2,
+          style: 2,
+          label: '🔊 Listen / استمع',
+          custom_id: `listen_tts:${sessionId}`
+        }
+      ]
+    }
+  ];
 }
 
 function formatTranslation(
@@ -94,14 +154,19 @@ function formatTranslation(
 ): string {
   const source = detectedSource && detectedSource !== 'auto' ? ` • detected: ${languageLabel(detectedSource)}` : '';
   const engine = provider ? ` • ${provider}` : '';
-  const output = readableTranslation(translated, target);
-  const original = directionalText(clipDiscord(input, 500), detectedSource ?? 'auto');
+  const output = normalizedTranslation(translated, target);
+  const original = directionalText(clipDiscord(input, 420), detectedSource ?? 'auto');
 
-  return clipDiscord(
-    `## 🌐 ${languageLabel(target)}${source}${engine}\n\n` +
-      `${output}\n\n` +
-      `**Original**\n> ${original.replaceAll('\n', '\n> ')}`
-  );
+  const header = `## 🌐 ${languageLabel(target)}${source}${engine}\n\n`;
+  const originalBlock = `\n\n**Original**\n> ${original.replaceAll('\n', '\n> ')}`;
+
+  // Prioritize the full translated content. If the original would push the
+  // Discord message over the limit, omit the original preview instead of
+  // truncating the translation prematurely.
+  if ((header + output + originalBlock).length <= 1900) {
+    return header + output + originalBlock;
+  }
+  return clipDiscord(header + output, 1900);
 }
 
 function formatCopyTranslation(
@@ -111,15 +176,12 @@ function formatCopyTranslation(
   provider?: string
 ): string {
   const source = detectedSource && detectedSource !== 'auto' ? ` • detected: ${languageLabel(detectedSource)}` : '';
-  const preview = readableTranslation(translated, target);
+  const preview = normalizedTranslation(translated, target);
+  const copyBlock = `\n\n**Copy text:**\n\`\`\`text\n${safeCodeBlock(translated)}\n\`\`\`\nPaste it into Discord and press Send so the message is authored by your own account.`;
+  const header = `## ✍️ Copy & send as yourself — ${languageLabel(target)}${source}${provider ? ` • ${provider}` : ''}\n\n`;
 
-  return clipDiscord(
-    `## ✍️ Copy & send as yourself — ${languageLabel(target)}${source}${provider ? ` • ${provider}` : ''}\n\n` +
-      `${preview}\n\n` +
-      `**Copy text:**\n` +
-      `\`\`\`text\n${safeCodeBlock(translated)}\n\`\`\`\n` +
-      `Paste it into Discord and press Send so the message is authored by your own account.`
-  );
+  if ((header + preview + copyBlock).length <= 1900) return header + preview + copyBlock;
+  return clipDiscord(header + preview, 1900);
 }
 
 async function runAndEdit(
@@ -233,7 +295,7 @@ export function handleTranslateMessageSelection(interaction: DiscordInteraction)
         translated.detectedSourceLanguage ?? source.spokenLanguage,
         translated.provider
       ),
-      components: [],
+      components: buildListenComponents(userId, translated.text, target),
       allowed_mentions: { parse: [] }
     };
   });
@@ -251,6 +313,7 @@ export function handleTranslateText(interaction: DiscordInteraction): void {
     const translated = await translateText(text, target, options);
     return {
       content: formatTranslation(text, translated.text, target, translated.detectedSourceLanguage, translated.provider),
+      components: buildListenComponents(userId, translated.text, target),
       allowed_mentions: { parse: [] }
     };
   });
@@ -267,6 +330,7 @@ export function handleSay(interaction: DiscordInteraction): void {
     const translated = await translateText(text, target, requestOptions(interaction, prefs));
     return {
       content: formatCopyTranslation(translated.text, target, translated.detectedSourceLanguage, translated.provider),
+      components: buildListenComponents(userId, translated.text, target),
       allowed_mentions: { parse: [] }
     };
   });
@@ -291,9 +355,42 @@ export function handleVoice(interaction: DiscordInteraction): void {
         `🎙️ **Transcript${transcript.language ? ` (${languageLabel(transcript.language)})` : ''}:** ${transcript.text}\n\n` +
           formatCopyTranslation(translated.text, target, translated.detectedSourceLanguage ?? transcript.language, translated.provider)
       ),
+      components: buildListenComponents(userId, translated.text, target),
       allowed_mentions: { parse: [] }
     };
   });
+}
+
+export function handleListenTts(interaction: DiscordInteraction): void {
+  void (async () => {
+    try {
+      const customId = interaction.data?.custom_id ?? '';
+      const sessionId = customId.startsWith('listen_tts:') ? customId.slice('listen_tts:'.length) : '';
+      const session = sessionId ? getSpeechSession(sessionId) : undefined;
+      if (!session) throw new Error('This Listen button expired. Translate the message again to create a new one.');
+
+      const userId = userIdOf(interaction);
+      if (session.userId !== userId) throw new Error('This Listen button belongs to another user.');
+
+      const audio = await generateGeminiSpeech(session.text, session.language);
+      await editOriginalResponseWithFile(
+        interaction.application_id,
+        interaction.token,
+        {
+          content: `🔊 **${languageLabel(session.language)} — audio**\nPress play on the attached file.`,
+          allowed_mentions: { parse: [] }
+        },
+        audio
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unexpected TTS error.';
+      console.error(error);
+      await editOriginalResponse(interaction.application_id, interaction.token, {
+        content: clipDiscord(`❌ ${message}`),
+        allowed_mentions: { parse: [] }
+      }).catch(console.error);
+    }
+  })();
 }
 
 export async function handleSettings(interaction: DiscordInteraction): Promise<Record<string, unknown>> {
@@ -318,6 +415,7 @@ export async function handleSettings(interaction: DiscordInteraction): Promise<R
       `⬆️ Outgoing default → **${languageLabel(prefs.outgoing)}**`,
       `🤖 Engine → **${prefs.provider === 'default' ? 'Auto (AI preferred)' : prefs.provider}**`,
       `✍️ Style → **${prefs.style}**`,
+      `🔊 Listen → **${geminiTtsConfigured() ? `enabled (${env.GEMINI_TTS_VOICE})` : 'not configured'}**`,
       '',
       'Source detection is automatic. With AI enabled, Arabic is classified as Egyptian Arabic or Modern Standard Arabic when possible.'
     ].join('\n'),
@@ -333,7 +431,8 @@ export function handleStatus(): Record<string, unknown> {
       '✅ **Discord endpoint:** online',
       `🌐 **Configured default provider:** ${translation.provider} — ${translation.configured ? 'configured' : 'not configured'}`,
       `🤖 **AI/Gemini:** ${aiConfigured() ? 'configured — auto detection + Egyptian/MSA aware' : 'not configured'}`,
-      `🎙️ **Voice:** ${voiceConfigured ? 'configured' : 'not configured'}`,
+      `🎙️ **Voice input / STT:** ${voiceConfigured ? 'configured' : 'not configured'}`,
+      `🔊 **Listen / Gemini TTS:** ${geminiTtsConfigured() ? `configured — ${env.GEMINI_TTS_MODEL} / ${env.GEMINI_TTS_VOICE}` : 'not configured'}`,
       `🌍 **Default my language:** ${languageLabel(env.DEFAULT_INCOMING_LANGUAGE)}`,
       `⬆️ **Default outgoing:** ${languageLabel(env.DEFAULT_OUTGOING_LANGUAGE)}`,
       '👤 **Send-as-user:** copy/paste mode; Discord apps cannot impersonate a personal account.'

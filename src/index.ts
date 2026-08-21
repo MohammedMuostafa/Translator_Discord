@@ -8,6 +8,7 @@ import {
   MessageFlags
 } from './discord.js';
 import {
+  handleListenTts,
   handleSay,
   handleSettings,
   handleStatus,
@@ -26,11 +27,12 @@ app.disable('x-powered-by');
 const statusPayload = () => ({
   ok: true,
   service: 'discord-user-translator',
-  version: '3.3.0',
+  version: '3.4.0',
   interactionEndpoint: '/interactions',
   translationProvider: env.TRANSLATION_PROVIDER,
   aiConfigured: aiConfigured(),
   voiceConfigured: Boolean(env.STT_URL && env.STT_API_KEY),
+  listenTts: Boolean((env.GEMINI_TTS_API_KEY ?? env.AI_API_KEY) && env.GEMINI_TTS_MODEL),
   sourceDetection: 'automatic',
   arabicDialectDetection: aiConfigured() ? 'egyptian-vs-msa' : 'generic'
 });
@@ -47,13 +49,23 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
 
   if (interaction.type === InteractionType.MessageComponent) {
     const customId = interaction.data?.custom_id ?? '';
-    if (!customId.startsWith('translate_target:')) {
-      return res.status(400).json({ error: 'Unsupported component interaction.' });
+
+    if (customId.startsWith('translate_target:')) {
+      res.json({ type: InteractionResponseType.DeferredUpdateMessage });
+      handleTranslateMessageSelection(interaction);
+      return;
     }
 
-    res.json({ type: InteractionResponseType.DeferredUpdateMessage });
-    handleTranslateMessageSelection(interaction);
-    return;
+    if (customId.startsWith('listen_tts:')) {
+      res.json({
+        type: InteractionResponseType.DeferredChannelMessageWithSource,
+        data: { flags: MessageFlags.Ephemeral }
+      });
+      handleListenTts(interaction);
+      return;
+    }
+
+    return res.status(400).json({ error: 'Unsupported component interaction.' });
   }
 
   if (interaction.type !== InteractionType.ApplicationCommand || !interaction.data) {
@@ -141,7 +153,7 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
 });
 
 app.listen(env.PORT, env.HOST, () => {
-  console.log(`Discord User Translator v3.3 listening on ${env.HOST}:${env.PORT}`);
+  console.log(`Discord User Translator v3.4 listening on ${env.HOST}:${env.PORT}`);
   console.log('Interactions endpoint: /interactions');
 
   if (env.REGISTER_COMMANDS_ON_START && env.DISCORD_BOT_TOKEN) {

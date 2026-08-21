@@ -33,6 +33,12 @@ const schema = z.object({
   AI_API_KEY: optionalString,
   AI_MODEL: optionalString,
 
+  // Gemini TTS. If GEMINI_TTS_API_KEY is omitted, AI_API_KEY is reused.
+  GEMINI_TTS_API_KEY: optionalString,
+  GEMINI_TTS_MODEL: z.string().min(1).default('gemini-3.1-flash-tts-preview'),
+  GEMINI_TTS_VOICE: z.string().min(1).default('Kore'),
+  TTS_MAX_CHARS: z.coerce.number().int().positive().default(4000),
+
   STT_URL: optionalUrl,
   STT_API_KEY: optionalString,
   MAX_AUDIO_BYTES: z.coerce.number().int().positive().default(15 * 1024 * 1024),
