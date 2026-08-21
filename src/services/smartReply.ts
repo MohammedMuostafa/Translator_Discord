@@ -5,8 +5,11 @@ export type SmartReplyMode = 'normal' | 'alternative' | 'shorter' | 'detailed';
 
 export type SmartReplyResult = {
   isQuestion: boolean;
+  sourceLanguage: string;
+  sourceLanguageCode: string;
   translatedMessage: string;
   answer: string;
+  answerArabic: string;
 };
 
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
@@ -51,26 +54,45 @@ function normalizeProviderError(status: number, body: string): string {
   return `AI provider error ${status}: ${message.slice(0, 450)}`;
 }
 
+function supportsTemperature(model: string): boolean {
+  return !/^gemini-3(?:\.|[-])/i.test(model);
+}
+
 function parseResult(content: string): SmartReplyResult {
   const parsed = JSON.parse(cleanJsonCandidate(content)) as {
     isQuestion?: unknown;
+    sourceLanguage?: unknown;
+    sourceLanguageCode?: unknown;
     translatedMessage?: unknown;
     answer?: unknown;
+    answerArabic?: unknown;
   };
 
+  const sourceLanguage = typeof parsed.sourceLanguage === 'string'
+    ? parsed.sourceLanguage.trim()
+    : 'Detected language';
+  const sourceLanguageCode = typeof parsed.sourceLanguageCode === 'string'
+    ? parsed.sourceLanguageCode.trim()
+    : 'auto';
   const translatedMessage = typeof parsed.translatedMessage === 'string'
     ? parsed.translatedMessage.trim()
     : '';
   const answer = typeof parsed.answer === 'string' ? parsed.answer.trim() : '';
+  const answerArabic = typeof parsed.answerArabic === 'string'
+    ? parsed.answerArabic.trim()
+    : '';
 
-  if (!translatedMessage || !answer) {
+  if (!translatedMessage || !answer || !answerArabic) {
     throw new Error('AI returned an incomplete smart reply.');
   }
 
   return {
     isQuestion: parsed.isQuestion === true,
+    sourceLanguage,
+    sourceLanguageCode,
     translatedMessage,
-    answer
+    answer,
+    answerArabic
   };
 }
 
@@ -95,29 +117,30 @@ export async function createSmartReply(
   }
 
   const normalizedLanguage = normalizeLanguage(outputLanguage, true);
-  const language = languageInstruction(normalizedLanguage);
+  const arabicLanguage = languageInstruction(normalizedLanguage);
   const previous = previousAnswer?.trim()
-    ? `\nPrevious proposed reply:\n${previousAnswer.trim()}`
+    ? `\nPrevious proposed reply in the sender's language:\n${previousAnswer.trim()}`
     : '';
 
-  const body = JSON.stringify({
+  const request: Record<string, unknown> = {
     model: env.AI_MODEL,
-    temperature: mode === 'alternative' ? 0.75 : 0.35,
     messages: [
       {
         role: 'system',
         content: [
           'You are TD AI, an assistant that helps Discord users understand and answer messages.',
-          `Write BOTH the translation and the proposed answer in ${language}.`,
+          'Detect the exact language/locale of the source message first.',
+          `Translate the SOURCE MESSAGE into ${arabicLanguage} for the current TD AI user.`,
+          'The proposed answer MUST be written in the SAME language and natural locale/style as the sender/source message.',
+          `Also translate the proposed answer into ${arabicLanguage} so the current user can understand what they are about to send.`,
+          'If the source is English, answer must be English. If Persian, answer must be Persian. If Egyptian Arabic, answer naturally in Egyptian Arabic. Apply the same rule to other languages.',
           'First decide whether the source message is a real question or request that expects an answer.',
-          'Translate the source faithfully into the requested language while preserving names, links, numbers, emojis, and technical terms.',
-          'If it is a question, answer the question directly and usefully.',
-          'If it is not a question, draft a natural contextual reply instead of pretending it is a question.',
+          'If it is a question, answer it directly and usefully. If not, draft a natural contextual reply.',
+          'Preserve names, links, numbers, emojis, technical terms, and the original intent.',
           'Do not invent private facts, current facts you cannot know, or actions the user did not take.',
-          'For Arabic output, use natural right-to-left sentence order and keep English names/acronyms intact.',
-          'Avoid redundant parentheses and never output double parentheses around English names.',
           modeInstruction(mode),
-          'Return ONLY valid JSON with exactly these keys: {"isQuestion":true|false,"translatedMessage":"...","answer":"..."}.'
+          'Return ONLY valid JSON with exactly these keys:',
+          '{"isQuestion":true|false,"sourceLanguage":"English","sourceLanguageCode":"en","translatedMessage":"Arabic translation","answer":"reply in sender language","answerArabic":"Arabic meaning of reply"}.'
         ].join(' ')
       },
       {
@@ -125,8 +148,13 @@ export async function createSmartReply(
         content: `Source message:\n${clean}${previous}`
       }
     ]
-  });
+  };
 
+  if (supportsTemperature(env.AI_MODEL)) {
+    request.temperature = mode === 'alternative' ? 0.75 : 0.35;
+  }
+
+  const body = JSON.stringify(request);
   let lastError = 'Smart reply failed.';
 
   for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt += 1) {
@@ -156,6 +184,7 @@ export async function createSmartReply(
           message?: { content?: string | Array<{ text?: string }> };
         }>;
       };
+
       const content = data.choices?.[0]?.message?.content;
       const text = typeof content === 'string'
         ? content

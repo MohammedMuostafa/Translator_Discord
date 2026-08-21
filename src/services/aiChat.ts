@@ -48,12 +48,18 @@ function normalizeApiError(status: number, body: string): string {
     const parsed = JSON.parse(body) as { error?: { message?: string } };
     message = parsed.error?.message ?? body;
   } catch {
-    // Keep raw provider response when it is not JSON.
+    // Keep raw provider response.
   }
 
   if (status === 429) return 'The AI provider is rate-limited right now. Try again shortly.';
   if (status === 503) return 'The AI model is temporarily busy. Try again in a moment.';
   return `AI provider error (${status}): ${message.slice(0, 500)}`;
+}
+
+function supportsTemperature(model: string): boolean {
+  // Gemini 3.x OpenAI-compatible endpoints no longer accept legacy sampling
+  // parameters such as temperature/top_p/top_k.
+  return !/^gemini-3(?:\.|[-])/i.test(model);
 }
 
 export function aiChatConfigured(): boolean {
@@ -63,22 +69,28 @@ export function aiChatConfigured(): boolean {
 export async function askAiChat(
   history: ChatTurn[],
   userMessage: string,
-  responseLanguage: ChatResponseLanguage
+  responseLanguage: ChatResponseLanguage,
+  modelOverride?: string
 ): Promise<string> {
-  if (!env.AI_API_URL || !env.AI_API_KEY || !env.AI_MODEL) {
+  const model = modelOverride?.trim() || env.AI_MODEL;
+  if (!env.AI_API_URL || !env.AI_API_KEY || !model) {
     throw new Error('AI chat is not configured. Set AI_API_URL, AI_API_KEY and AI_MODEL.');
   }
 
-  const body = JSON.stringify({
-    model: env.AI_MODEL,
+  const request: Record<string, unknown> = {
+    model,
     messages: [
       { role: 'system', content: systemPrompt(responseLanguage) },
       ...history,
       { role: 'user', content: userMessage }
-    ],
-    temperature: 0.55
-  });
+    ]
+  };
 
+  if (supportsTemperature(model)) {
+    request.temperature = 0.55;
+  }
+
+  const body = JSON.stringify(request);
   let lastError = 'AI chat failed.';
 
   for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt += 1) {

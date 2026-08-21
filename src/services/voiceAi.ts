@@ -18,10 +18,9 @@ import { env } from '../config.js';
 import { askAiChat, type ChatResponseLanguage, type ChatTurn } from './aiChat.js';
 import { generateGeminiSpeech, geminiTtsConfigured } from './geminiTts.js';
 import { getGatewayClient, waitForGatewayReady } from './gatewayChat.js';
-import { transcribeAudioBytes } from './stt.js';
+import { sttConfigured, transcribeAudioBytes } from './stt.js';
 
 const require = createRequire(import.meta.url);
-// opusscript is a pure-WASM/JS decoder, which avoids native build problems on Railway Alpine.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const OpusScript: any = require('opusscript');
 
@@ -74,6 +73,10 @@ function inferSpeechLanguage(reply: string, preferred: ChatResponseLanguage): st
   return 'en';
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 async function notifyUser(userId: string, text: string): Promise<void> {
   const client = getGatewayClient();
   const user = await client.users.fetch(userId).catch(() => undefined);
@@ -83,7 +86,7 @@ async function notifyUser(userId: string, text: string): Promise<void> {
 
 async function playSpeech(session: VoiceAiSession, text: string): Promise<void> {
   if (!geminiTtsConfigured()) {
-    throw new Error('Voice AI needs Gemini TTS configured so the bot can speak back.');
+    throw new Error('Gemini TTS is not configured.');
   }
 
   const language = inferSpeechLanguage(text, session.language);
@@ -100,24 +103,44 @@ async function processUtterance(session: VoiceAiSession, pcmChunks: Buffer[]): P
   if (pcmChunks.length === 0) return;
 
   const pcm = Buffer.concat(pcmChunks);
-  // Ignore tiny clicks/noise. 48kHz stereo s16le = 192,000 bytes/sec.
   if (pcm.byteLength < 24_000) return;
 
   session.busy = true;
   try {
     const wav = pcmToWav(pcm);
-    const transcript = await transcribeAudioBytes(wav, 'td-ai-voice.wav', 'audio/wav');
 
-    const reply = await askAiChat(session.history, transcript.text, session.language);
+    let transcript;
+    try {
+      transcript = await transcribeAudioBytes(wav, 'td-ai-voice.wav', 'audio/wav');
+    } catch (error) {
+      throw new Error(`Speech recognition failed: ${errorMessage(error)}`);
+    }
+
+    let reply: string;
+    try {
+      reply = await askAiChat(
+        session.history,
+        transcript.text,
+        session.language,
+        env.VOICE_AI_MODEL ?? env.AI_MODEL
+      );
+    } catch (error) {
+      throw new Error(`AI reply failed: ${errorMessage(error)}`);
+    }
+
     session.history = trimHistory([
       ...session.history,
       { role: 'user', content: transcript.text },
       { role: 'assistant', content: reply }
     ]);
 
-    await playSpeech(session, reply);
+    try {
+      await playSpeech(session, reply);
+    } catch (error) {
+      throw new Error(`Voice synthesis/playback failed: ${errorMessage(error)}`);
+    }
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unexpected voice AI error.';
+    const message = errorMessage(error);
     console.error('Voice AI error:', error);
     await notifyUser(session.userId, `❌ **TD AI Voice:** ${message}`);
   } finally {
@@ -131,7 +154,6 @@ function attachReceiver(session: VoiceAiSession): void {
   receiver.speaking.on('start', (speakerId) => {
     const current = sessions.get(session.guildId);
     if (!current || current !== session) return;
-    // Privacy-first: only listen to the user who started the session.
     if (speakerId !== session.userId || session.busy || session.capturing) return;
     session.capturing = true;
 
@@ -183,8 +205,7 @@ export function voiceAiConfigured(): boolean {
     env.AI_API_URL &&
     env.AI_API_KEY &&
     env.AI_MODEL &&
-    env.STT_URL &&
-    env.STT_API_KEY &&
+    sttConfigured() &&
     geminiTtsConfigured()
   );
 }
@@ -195,7 +216,9 @@ export async function joinVoiceAi(
   language: ChatResponseLanguage = 'auto'
 ): Promise<{ channelName: string }> {
   if (!voiceAiConfigured()) {
-    throw new Error('Voice AI is not fully configured. It needs AI chat, STT, Gemini TTS, and DISCORD_BOT_TOKEN.');
+    throw new Error(
+      'Voice AI is not fully configured. It needs AI chat, speech recognition (STT service or Gemini STT), Gemini TTS, and DISCORD_BOT_TOKEN.'
+    );
   }
 
   await waitForGatewayReady();

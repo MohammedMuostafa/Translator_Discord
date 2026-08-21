@@ -104,16 +104,20 @@ function arabicReplyLanguage(preferred: string): string {
   return normalized === 'ar-msa' ? 'ar-msa' : 'ar-eg';
 }
 
-function smartReplyContent(result: SmartReplyResult, language: string): string {
+function smartReplyContent(result: SmartReplyResult, arabicLanguage: string): string {
   const messageLabel = result.isQuestion ? 'السؤال بالعربي' : 'الرسالة بالعربي';
+
   return [
     `## ${result.isQuestion ? '❓' : '💬'} Smart Answer`,
     '',
     `**${messageLabel}**`,
-    stabilizeRtl(result.translatedMessage, language),
+    stabilizeRtl(result.translatedMessage, arabicLanguage),
     '',
-    '**الرد المقترح**',
-    stabilizeRtl(result.answer, language)
+    `**الرد على الشخص — ${result.sourceLanguage}**`,
+    stabilizeRtl(result.answer, result.sourceLanguageCode),
+    '',
+    '**معنى الرد بالعربي**',
+    stabilizeRtl(result.answerArabic, arabicLanguage)
   ].join('\n');
 }
 
@@ -121,7 +125,7 @@ function smartReplyComponents(
   userId: string,
   sessionId: string,
   result: SmartReplyResult,
-  language: string
+  arabicLanguage: string
 ): Array<Record<string, unknown>> {
   return [
     {
@@ -133,7 +137,7 @@ function smartReplyComponents(
         { type: 2, style: 3, label: '✅ Use This Reply', custom_id: `smart_reply:use:${sessionId}` }
       ]
     },
-    ...listenComponents(userId, result.answer, language)
+    ...listenComponents(userId, result.answerArabic, arabicLanguage)
   ];
 }
 
@@ -262,14 +266,17 @@ export function handleSmartReplyButton(interaction: DiscordInteraction): void {
         content: [
           '## ✅ Ready to send',
           '',
-          'Discord does not allow an app to send a normal message as your personal account.',
-          'Use the copy button on this code block, paste it into the chat, then press Enter:',
+          `Reply language: **${session.result.sourceLanguage}**`,
+          'Copy the reply below, paste it into the chat, then press Enter:',
           '',
           '```text',
           safeCodeBlock(session.result.answer),
-          '```'
+          '```',
+          '',
+          '**معنى الرد بالعربي**',
+          stabilizeRtl(session.result.answerArabic, session.language)
         ].join('\n'),
-        components: listenComponents(userId, session.result.answer, session.language),
+        components: listenComponents(userId, session.result.answerArabic, session.language),
         allowed_mentions: { parse: [] }
       };
     }
@@ -360,6 +367,9 @@ export function handleHelp(): Record<string, unknown> {
       '',
       '**Right-click any message → Apps → TD AI**',
       '🌐 Translate • ❓ Smart Answer • 📝 Summarize • 🧠 Explain • 💡 Simplify • ✍️ Rewrite • 💬 Draft Reply',
+      '',
+      '**Smart Answer**',
+      'Shows the selected message in Arabic, drafts the reply in the sender’s own language, and shows the Arabic meaning of that reply.',
       '',
       '**Commands**',
       '`/translate` — translate text with automatic source detection',
