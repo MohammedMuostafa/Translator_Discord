@@ -14,6 +14,7 @@ import { getPreference, updatePreference } from './storage/preferences.js';
 import { createTranslationSession, getTranslationSession } from './services/translationSessions.js';
 import { createSpeechSession, getSpeechSession } from './services/speechSessions.js';
 import { generateGeminiSpeech, geminiTtsConfigured } from './services/geminiTts.js';
+import { getDisplayRuntimeSettings, type DisplayRuntimeSettings } from './services/runtimeConfig.js';
 
 function userIdOf(interaction: DiscordInteraction): string {
   const id = interaction.member?.user?.id ?? interaction.user?.id;
@@ -57,16 +58,12 @@ function protectDirectionalTokens(text: string): { text: string; restore: (value
     return String.fromCharCode(0xe000 + index);
   };
 
-  // Keep code, URLs and Discord markup byte-for-byte intact so bidi helpers do
-  // not break links, mentions, custom emojis or inline code.
   let value = text
     .replace(/`[^`\n]+`/g, protect)
     .replace(/https?:\/\/[^\s<>)]+/g, protect)
     .replace(/www\.[^\s<>)]+/g, protect)
     .replace(/<(?:(?:@!?|#|@&)?\d+|a?:[^:>]+:\d+)>/g, protect);
 
-  // Isolate consecutive Latin/number runs such as "Wilder World", "4K 1080p"
-  // or "Infinity Rising" while leaving Arabic/Persian sentence order intact.
   value = value.replace(
     /(?:[A-Za-z0-9][A-Za-z0-9._:/@#%+&?=,'()\-]*)(?:[ \t]+(?:[A-Za-z0-9][A-Za-z0-9._:/@#%+&?=,'()\-]*))*/g,
     `${LRI}$&${PDI}`
@@ -121,64 +118,75 @@ function directionalText(text: string, language: string): string {
 }
 
 function normalizedTranslation(text: string, language: string): string {
-  // Preserve Discord Markdown produced by the AI. Only normalize excessive blank
-  // lines and bidi direction; do not promote every line to a heading.
   const normalized = text.replace(/\n{3,}/g, '\n\n').trim();
   return directionalText(normalized, language);
+}
+
+function heading(display: DisplayRuntimeSettings): string {
+  return display.headingSize === 'large' ? '#' : display.headingSize === 'small' ? '###' : '##';
+}
+
+function icon(display: DisplayRuntimeSettings, value: string): string {
+  return display.showEmojis ? value : '';
+}
+
+function gap(display: DisplayRuntimeSettings): string {
+  return display.density === 'compact' ? '\n' : display.density === 'relaxed' ? '\n\n\n' : '\n\n';
+}
+
+function divider(display: DisplayRuntimeSettings): string {
+  return display.divider === 'line' ? '\n---\n' : display.divider === 'spaced' ? '\n\n' : '';
 }
 
 function buildListenComponents(userId: string, translated: string, target: string): Array<Record<string, unknown>> {
   if (!geminiTtsConfigured()) return [];
   const sessionId = createSpeechSession(userId, translated, target);
-  return [
-    {
-      type: 1,
-      components: [
-        {
-          type: 2,
-          style: 2,
-          label: '🔊 Listen / استمع',
-          custom_id: `listen_tts:${sessionId}`
-        }
-      ]
-    }
-  ];
+  return [{
+    type: 1,
+    components: [{ type: 2, style: 2, label: '🔊 Listen / استمع', custom_id: `listen_tts:${sessionId}` }]
+  }];
 }
 
 function formatTranslation(
   input: string,
   translated: string,
   target: string,
+  display: DisplayRuntimeSettings,
   detectedSource?: string,
   provider?: string
 ): string {
-  const source = detectedSource && detectedSource !== 'auto' ? ` • detected: ${languageLabel(detectedSource)}` : '';
-  const engine = provider ? ` • ${provider}` : '';
+  const source = display.showDetectedLanguage && detectedSource && detectedSource !== 'auto'
+    ? ` • detected: ${languageLabel(detectedSource)}`
+    : '';
+  const engine = display.showProvider && provider ? ` • ${provider}` : '';
   const output = normalizedTranslation(translated, target);
-  const original = directionalText(clipDiscord(input, 420), detectedSource ?? 'auto');
+  const original = directionalText(
+    clipDiscord(input, display.originalPreviewChars),
+    detectedSource ?? 'auto'
+  );
+  const header = `${heading(display)} ${icon(display, '🌐 ')}${languageLabel(target)}${source}${engine}${gap(display)}`;
+  const originalBlock = display.showOriginal
+    ? `${gap(display)}${divider(display)}**Original**\n> ${original.replaceAll('\n', '\n> ')}`
+    : '';
 
-  const header = `## 🌐 ${languageLabel(target)}${source}${engine}\n\n`;
-  const originalBlock = `\n\n**Original**\n> ${original.replaceAll('\n', '\n> ')}`;
-
-  // Prioritize the full translated content. If the original would push the
-  // Discord message over the limit, omit the original preview instead of
-  // truncating the translation prematurely.
-  if ((header + output + originalBlock).length <= 1900) {
-    return header + output + originalBlock;
-  }
+  if ((header + output + originalBlock).length <= 1900) return header + output + originalBlock;
   return clipDiscord(header + output, 1900);
 }
 
 function formatCopyTranslation(
   translated: string,
   target: string,
+  display: DisplayRuntimeSettings,
   detectedSource?: string,
   provider?: string
 ): string {
-  const source = detectedSource && detectedSource !== 'auto' ? ` • detected: ${languageLabel(detectedSource)}` : '';
+  const source = display.showDetectedLanguage && detectedSource && detectedSource !== 'auto'
+    ? ` • detected: ${languageLabel(detectedSource)}`
+    : '';
+  const engine = display.showProvider && provider ? ` • ${provider}` : '';
   const preview = normalizedTranslation(translated, target);
-  const copyBlock = `\n\n**Copy text:**\n\`\`\`text\n${safeCodeBlock(translated)}\n\`\`\`\nPaste it into Discord and press Send so the message is authored by your own account.`;
-  const header = `## ✍️ Copy & send as yourself — ${languageLabel(target)}${source}${provider ? ` • ${provider}` : ''}\n\n`;
+  const copyBlock = `${gap(display)}${divider(display)}**Copy text:**\n\`\`\`text\n${safeCodeBlock(translated)}\n\`\`\`\nPaste it into Discord and press Send so the message is authored by your own account.`;
+  const header = `${heading(display)} ${icon(display, '✍️ ')}Copy & send as yourself — ${languageLabel(target)}${source}${engine}${gap(display)}`;
 
   if ((header + preview + copyBlock).length <= 1900) return header + preview + copyBlock;
   return clipDiscord(header + preview, 1900);
@@ -248,21 +256,17 @@ export async function handleTranslateMessagePicker(interaction: DiscordInteracti
       'AI will detect the source automatically — including **Egyptian Arabic vs Modern Standard Arabic**.',
       'Choose the language you want:'
     ].join('\n'),
-    components: [
-      {
-        type: 1,
-        components: [
-          {
-            type: 3,
-            custom_id: `translate_target:${sessionId}`,
-            placeholder: `Translate to… (My language: ${languageLabel(prefs.incoming)})`.slice(0, 150),
-            min_values: 1,
-            max_values: 1,
-            options: targetSelectOptions(prefs.incoming)
-          }
-        ]
-      }
-    ],
+    components: [{
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: `translate_target:${sessionId}`,
+        placeholder: `Translate to… (My language: ${languageLabel(prefs.incoming)})`.slice(0, 150),
+        min_values: 1,
+        max_values: 1,
+        options: targetSelectOptions(prefs.incoming)
+      }]
+    }],
     allowed_mentions: { parse: [] }
   };
 }
@@ -278,6 +282,7 @@ export function handleTranslateMessageSelection(interaction: DiscordInteraction)
     if (session.userId !== userId) throw new Error('This translation menu belongs to another user.');
 
     const prefs = await getPreference(userId);
+    const display = await getDisplayRuntimeSettings();
     const selected = interaction.data?.values?.[0];
     const target = resolveTarget(selected, prefs.incoming, prefs.incoming);
     const source = await messageText(session.message);
@@ -292,6 +297,7 @@ export function handleTranslateMessageSelection(interaction: DiscordInteraction)
         source.text,
         translated.text,
         target,
+        display,
         translated.detectedSourceLanguage ?? source.spokenLanguage,
         translated.provider
       ),
@@ -305,6 +311,7 @@ export function handleTranslateText(interaction: DiscordInteraction): void {
   void runAndEdit(interaction, async () => {
     const userId = userIdOf(interaction);
     const prefs = await getPreference(userId);
+    const display = await getDisplayRuntimeSettings();
     const text = option<string>(interaction, 'text')?.trim();
     if (!text) throw new Error('Text is required.');
 
@@ -312,7 +319,7 @@ export function handleTranslateText(interaction: DiscordInteraction): void {
     const options = requestOptions(interaction, prefs);
     const translated = await translateText(text, target, options);
     return {
-      content: formatTranslation(text, translated.text, target, translated.detectedSourceLanguage, translated.provider),
+      content: formatTranslation(text, translated.text, target, display, translated.detectedSourceLanguage, translated.provider),
       components: buildListenComponents(userId, translated.text, target),
       allowed_mentions: { parse: [] }
     };
@@ -323,13 +330,14 @@ export function handleSay(interaction: DiscordInteraction): void {
   void runAndEdit(interaction, async () => {
     const userId = userIdOf(interaction);
     const prefs = await getPreference(userId);
+    const display = await getDisplayRuntimeSettings();
     const text = option<string>(interaction, 'text')?.trim();
     if (!text) throw new Error('Text is required.');
 
     const target = resolveTarget(option<string>(interaction, 'target'), prefs.outgoing, prefs.incoming);
     const translated = await translateText(text, target, requestOptions(interaction, prefs));
     return {
-      content: formatCopyTranslation(translated.text, target, translated.detectedSourceLanguage, translated.provider),
+      content: formatCopyTranslation(translated.text, target, display, translated.detectedSourceLanguage, translated.provider),
       components: buildListenComponents(userId, translated.text, target),
       allowed_mentions: { parse: [] }
     };
@@ -340,6 +348,7 @@ export function handleVoice(interaction: DiscordInteraction): void {
   void runAndEdit(interaction, async () => {
     const userId = userIdOf(interaction);
     const prefs = await getPreference(userId);
+    const display = await getDisplayRuntimeSettings();
     const attachment = targetAttachment(interaction);
     if (!attachment) throw new Error('Audio attachment is required.');
 
@@ -352,8 +361,8 @@ export function handleVoice(interaction: DiscordInteraction): void {
     });
     return {
       content: clipDiscord(
-        `🎙️ **Transcript${transcript.language ? ` (${languageLabel(transcript.language)})` : ''}:** ${transcript.text}\n\n` +
-          formatCopyTranslation(translated.text, target, translated.detectedSourceLanguage ?? transcript.language, translated.provider)
+        `${icon(display, '🎙️ ')}**Transcript${transcript.language ? ` (${languageLabel(transcript.language)})` : ''}:** ${transcript.text}${gap(display)}` +
+          formatCopyTranslation(translated.text, target, display, translated.detectedSourceLanguage ?? transcript.language, translated.provider)
       ),
       components: buildListenComponents(userId, translated.text, target),
       allowed_mentions: { parse: [] }

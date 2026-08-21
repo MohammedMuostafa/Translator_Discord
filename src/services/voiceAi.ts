@@ -20,7 +20,7 @@ import { askAiChat, type ChatResponseLanguage, type ChatTurn } from './aiChat.js
 import { generateGeminiSpeech, geminiTtsConfigured } from './geminiTts.js';
 import { getGatewayClient, waitForGatewayReady } from './gatewayChat.js';
 import { sttConfigured, transcribeAudioBytes } from './stt.js';
-import { getGeminiTaskRoute, getVoiceRuntimeSettings, type ThinkingLevelName } from './runtimeConfig.js';
+import { getGeminiTaskRoute, getVoiceRuntimeSettings, type ThinkingLevelName, type VoiceSpeakerAccess } from './runtimeConfig.js';
 
 const require = createRequire(import.meta.url);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -51,6 +51,9 @@ interface VoiceAiSession {
   capturing: boolean;
   startedAt: number;
   silenceMs: number;
+  speakerAccess: VoiceSpeakerAccess;
+  activeSpeakerId?: string;
+  participantIds: Set<string>;
 }
 
 const sessions = new Map<string, VoiceAiSession>();
@@ -78,11 +81,14 @@ async function notifyUser(userId: string, text: string): Promise<void> {
 
 function languageSystemInstruction(language: ChatResponseLanguage): string {
   const base = [
-    'You are TD AI speaking naturally with one user inside a Discord voice channel.',
+    'You are TD AI participating naturally in a GROUP Discord voice channel.',
+    'Multiple different human speakers may talk to you during the same session.',
+    'Answer the person who is currently speaking; do not assume consecutive turns belong to the same person.',
+    'Every human in the connected voice channel is allowed to ask you questions unless the session is configured as owner-only.',
     'Be smart, practical, context-aware and conversational.',
-    'Reply quickly. Prefer one to three short sentences unless the user asks for detail.',
+    'Reply quickly. Prefer one to three short sentences unless the current speaker asks for detail.',
     'Do not announce internal processing steps.',
-    'If the user interrupts you, stop and listen.',
+    'If a human starts speaking while you are talking, stop and listen.',
     'Never claim you performed an external action unless you actually did.'
   ];
   switch (language) {
@@ -208,13 +214,40 @@ async function connectGeminiLive(session: VoiceAiSession): Promise<void> {
   session.live = live;
 }
 
+function canListenToSpeaker(session: VoiceAiSession, speakerId: string): boolean {
+  const client = getGatewayClient();
+  if (speakerId === client.user?.id) return false;
+
+  if (session.speakerAccess === 'owner-only' && speakerId !== session.userId) {
+    return false;
+  }
+
+  const guild = client.guilds.cache.get(session.guildId);
+  const voiceState = guild?.voiceStates.cache.get(speakerId);
+  if (!voiceState || voiceState.channelId !== session.channelId) return false;
+
+  const member = voiceState.member ?? guild?.members.cache.get(speakerId);
+  if (member?.user.bot) return false;
+
+  return true;
+}
+
 function attachLiveReceiver(session: VoiceAiSession): void {
   const receiver = session.connection.receiver;
   receiver.speaking.on('start', (speakerId) => {
     const current = sessions.get(session.guildId);
-    if (!current || current !== session || speakerId !== session.userId || session.capturing || !session.live) return;
+    if (!current || current !== session || !session.live || !canListenToSpeaker(session, speakerId)) return;
+
+    // One spoken turn is processed at a time. Everyone in the channel can take
+    // the next turn; overlapping speech is ignored until the active speaker
+    // finishes so two PCM streams are never mixed into one Gemini turn.
+    if (session.capturing && session.activeSpeakerId !== speakerId) return;
+    if (session.capturing) return;
+
     if (session.player.state.status !== AudioPlayerStatus.Idle) stopPlayback(session);
     session.capturing = true;
+    session.activeSpeakerId = speakerId;
+    session.participantIds.add(speakerId);
     session.busy = false;
     session.inputTranscript = '';
     session.outputTranscript = '';
@@ -231,6 +264,7 @@ function attachLiveReceiver(session: VoiceAiSession): void {
       finalized = true;
       clearTimeout(timer);
       session.capturing = false;
+      session.activeSpeakerId = undefined;
       try { decoder.delete(); } catch { /* no-op */ }
       try { session.live?.sendRealtimeInput({ audioStreamEnd: true }); session.busy = true; }
       catch (error) { console.error('Gemini Live audioStreamEnd error:', error); }
@@ -298,15 +332,17 @@ function attachCascadeReceiver(session: VoiceAiSession): void {
   const receiver = session.connection.receiver;
   receiver.speaking.on('start', (speakerId) => {
     const current = sessions.get(session.guildId);
-    if (!current || current !== session || speakerId !== session.userId || session.busy || session.capturing) return;
+    if (!current || current !== session || !canListenToSpeaker(session, speakerId) || session.busy || session.capturing) return;
     session.capturing = true;
+    session.activeSpeakerId = speakerId;
+    session.participantIds.add(speakerId);
     const opusStream = receiver.subscribe(speakerId, { end: { behavior: EndBehaviorType.AfterSilence, duration: session.silenceMs } });
     const decoder = new OpusScript(48_000, 2, OpusScript.Application.AUDIO);
     const chunks: Buffer[] = [];
     let finalized = false;
     const timer = setTimeout(() => opusStream.destroy(), env.VOICE_AI_MAX_UTTERANCE_SECONDS * 1000);
     const finalize = () => {
-      if (finalized) return; finalized = true; clearTimeout(timer); session.capturing = false;
+      if (finalized) return; finalized = true; clearTimeout(timer); session.capturing = false; session.activeSpeakerId = undefined;
       try { decoder.delete(); } catch { /* no-op */ }
       void processCascadeUtterance(session, chunks);
     };
@@ -349,7 +385,8 @@ export async function joinVoiceAi(
   const session: VoiceAiSession = {
     guildId, channelId: channel.id, userId, language, mode: env.VOICE_AI_MODE, connection, player,
     inputTranscript: '', outputTranscript: '', turns: 0, history: [], busy: false, capturing: false,
-    startedAt: Date.now(), silenceMs: runtimeVoice.silenceMs
+    startedAt: Date.now(), silenceMs: runtimeVoice.silenceMs, speakerAccess: runtimeVoice.speakerAccess,
+    participantIds: new Set<string>()
   };
   sessions.set(guildId, session);
 
@@ -390,6 +427,9 @@ export function voiceAiStatus(guildId: string) {
     mode: session.mode,
     inputTranscript: session.inputTranscript || undefined,
     outputTranscript: session.outputTranscript || undefined,
-    silenceMs: session.silenceMs
+    silenceMs: session.silenceMs,
+    speakerAccess: session.speakerAccess,
+    activeSpeakerId: session.activeSpeakerId,
+    participantCount: session.participantIds.size
   };
 }

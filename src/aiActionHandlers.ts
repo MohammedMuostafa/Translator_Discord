@@ -18,6 +18,7 @@ import {
   getSmartReplySession,
   updateSmartReplySession
 } from './services/smartReplySessions.js';
+import { getDisplayRuntimeSettings, type DisplayRuntimeSettings } from './services/runtimeConfig.js';
 
 const RLM='\u200f'; const LRI='\u2066'; const PDI='\u2069';
 
@@ -48,29 +49,29 @@ function listenComponents(userId:string,text:string,language:string):Array<Recor
   return [{type:1,components:[{type:2,style:2,label:'🔊 Listen / استمع',custom_id:`listen_tts:${id}`}]}];
 }
 
-function actionLabel(action:AiAction):string{
-  switch(action){case'summarize':return'📝 Summary';case'explain':return'🧠 Explain';case'simplify':return'💡 Simplify';case'rewrite':return'✍️ Rewrite';case'reply':return'💬 Draft Reply';default:return'🤖 TD AI'}
+function actionLabel(action:AiAction,display?:DisplayRuntimeSettings):string{
+  const raw=(()=>{switch(action){case'summarize':return'📝 Summary';case'explain':return'🧠 Explain';case'simplify':return'💡 Simplify';case'rewrite':return'✍️ Rewrite';case'reply':return'💬 Draft Reply';default:return'🤖 TD AI'}})();
+  return display?.showEmojis===false?raw.replace(/^\p{Extended_Pictographic}\uFE0F?\s*/u,''):raw;
 }
 function arabicReplyLanguage(preferred:string):string{return normalizeLanguage(preferred,true)==='ar-msa'?'ar-msa':'ar-eg'}
 function quote(text:string,language:string):string{return stabilizeRtl(text,language).split('\n').map(line=>`> ${line}`).join('\n')}
+function heading(display:DisplayRuntimeSettings,offset=0):string{const base=display.headingSize==='large'?1:display.headingSize==='small'?3:2;return '#'.repeat(Math.min(3,base+offset))}
+function icon(display:DisplayRuntimeSettings,value:string):string{return display.showEmojis?value:''}
+function blockGap(display:DisplayRuntimeSettings):string{return display.density==='compact'?'\n':display.density==='relaxed'?'\n\n\n':'\n\n'}
+function divider(display:DisplayRuntimeSettings):string{return display.divider==='line'?'\n---\n':display.divider==='spaced'?'\n\n':' '}
+function arabicBlock(text:string,language:string,display:DisplayRuntimeSettings):string{return display.quoteArabic?quote(text,language):stabilizeRtl(text,language)}
 
-function smartReplyContent(result:SmartReplyResult,arabicLanguage:string):string{
+function smartReplyContent(result:SmartReplyResult,arabicLanguage:string,display:DisplayRuntimeSettings):string{
   const messageLabel=result.isQuestion?'السؤال بالعربي':'الرسالة بالعربي';
-  return [
-    `## ${result.isQuestion?'❓':'💬'} Smart Answer`,
-    `**Detected:** ${result.sourceLanguage}`,
-    '',
-    `### 🇸🇦 ${messageLabel}`,
-    quote(result.translatedMessage,arabicLanguage),
-    '',
-    `### 💬 Reply — ${result.sourceLanguage}`,
-    stabilizeRtl(result.answer,result.sourceLanguageCode),
-    '',
-    '### 📝 معنى الرد بالعربي',
-    quote(result.answerArabic,arabicLanguage)
-  ].join('\n');
+  const h1=heading(display,0);const h2=heading(display,1);const gap=blockGap(display);const sep=divider(display);
+  const title=`${h1} ${icon(display,result.isQuestion?'❓ ':'💬 ')}Smart Answer`;
+  const detected=display.showDetectedLanguage?`**Detected:** ${result.sourceLanguage}`:'';
+  const arabicSource=[`${h2} ${icon(display,'🇸🇦 ')}${messageLabel}`,arabicBlock(result.translatedMessage,arabicLanguage,display)].join('\n');
+  const reply=[`${h2} ${icon(display,'💬 ')}Reply — ${result.sourceLanguage}`,stabilizeRtl(result.answer,result.sourceLanguageCode)].join('\n');
+  const arabicReply=[`${h2} ${icon(display,'📝 ')}معنى الرد بالعربي`,arabicBlock(result.answerArabic,arabicLanguage,display)].join('\n');
+  const ordered=display.smartAnswerArabicFirst?[arabicSource,reply,arabicReply]:[reply,arabicSource,arabicReply];
+  return [title,detected,...ordered].filter(Boolean).join(gap+sep).replace(/\n{4,}/g,'\n\n\n');
 }
-
 function smartReplyComponents(userId:string,sessionId:string,result:SmartReplyResult,arabicLanguage:string):Array<Record<string,unknown>>{
   return [
     {type:1,components:[
@@ -101,11 +102,11 @@ export function handleAiActionButton(interaction:DiscordInteraction):void{
     const userId=userIdOf(interaction);if(session.userId!==userId)throw new Error('This TD AI menu belongs to another user.');const prefs=await getPreference(userId);
     if(actionRaw==='translate')return{content:'## 🌐 Translate\nChoose the target language:',components:[{type:1,components:[{type:3,custom_id:`ai_translate_target:${sessionId}`,placeholder:`Translate to… (My language: ${languageLabel(prefs.incoming)})`.slice(0,150),min_values:1,max_values:1,options:targetSelectOptions(prefs.incoming)}]}],allowed_mentions:{parse:[]}};
     if(actionRaw==='answer'){
-      const language=arabicReplyLanguage(prefs.incoming);const result=await createSmartReply(session.message.content,language);const smartId=createSmartReplySession(userId,session.message.content,language,result);
-      return{content:clipDiscord(smartReplyContent(result,language),1900),components:smartReplyComponents(userId,smartId,result,language),allowed_mentions:{parse:[]}};
+      const language=arabicReplyLanguage(prefs.incoming);const result=await createSmartReply(session.message.content,language);const smartId=createSmartReplySession(userId,session.message.content,language,result);const display=await getDisplayRuntimeSettings();
+      return{content:clipDiscord(smartReplyContent(result,language,display),1900),components:smartReplyComponents(userId,smartId,result,language),allowed_mentions:{parse:[]}};
     }
     const action=actionRaw as AiAction;if(!['summarize','explain','simplify','rewrite','reply'].includes(action))throw new Error('Unknown TD AI action.');
-    const output=await runAiAction(action,session.message.content,prefs.incoming);return{content:clipDiscord(`## ${actionLabel(action)}\n\n${stabilizeRtl(output,prefs.incoming)}`,1900),components:listenComponents(userId,output,prefs.incoming),allowed_mentions:{parse:[]}};
+    const output=await runAiAction(action,session.message.content,prefs.incoming);const display=await getDisplayRuntimeSettings();return{content:clipDiscord(`${heading(display)} ${actionLabel(action,display)}${blockGap(display)}${stabilizeRtl(output,prefs.incoming)}`,1900),components:listenComponents(userId,output,prefs.incoming),allowed_mentions:{parse:[]}};
   });
 }
 
@@ -131,8 +132,8 @@ export function handleSmartReplyEditSubmit(interaction:DiscordInteraction):void{
     const customId=interaction.data?.custom_id??'';const sessionId=customId.startsWith('smart_reply_edit:')?customId.slice('smart_reply_edit:'.length):'';const session=sessionId?getSmartReplySession(sessionId):undefined;
     if(!session)throw new Error('This answer expired. Open TD AI on the message again.');const userId=userIdOf(interaction);if(session.userId!==userId)throw new Error('This answer belongs to another user.');
     const edited=modalValue(interaction,'answer')?.trim();if(!edited)throw new Error('Edited answer cannot be empty.');
-    const answerArabic=await translateEditedReplyToArabic(edited,session.language);const result={...session.result,answer:edited,answerArabic};updateSmartReplySession(sessionId,result);
-    return{content:clipDiscord(smartReplyContent(result,session.language),1900),components:smartReplyComponents(userId,sessionId,result,session.language),allowed_mentions:{parse:[]}};
+    const answerArabic=await translateEditedReplyToArabic(edited,session.language);const result={...session.result,answer:edited,answerArabic};updateSmartReplySession(sessionId,result);const display=await getDisplayRuntimeSettings();
+    return{content:clipDiscord(smartReplyContent(result,session.language,display),1900),components:smartReplyComponents(userId,sessionId,result,session.language),allowed_mentions:{parse:[]}};
   });
 }
 
@@ -142,8 +143,8 @@ export function handleSmartReplyButton(interaction:DiscordInteraction):void{
     const userId=userIdOf(interaction);if(session.userId!==userId)throw new Error('This answer belongs to another user.');
     if(action==='use')return{content:['## ✅ Ready to send',`**Reply language:** ${session.result.sourceLanguage}`,'','```text',safeCodeBlock(session.result.answer),'```','','**Arabic meaning**',quote(session.result.answerArabic,session.language),'','Copy the reply, paste it into Discord, then press Enter.'].join('\n'),components:listenComponents(userId,session.result.answerArabic,session.language),allowed_mentions:{parse:[]}};
     const modeMap:Record<string,SmartReplyMode>={regen:'alternative',shorter:'shorter',detailed:'detailed'};const mode=modeMap[action??''];if(!mode)throw new Error('Unknown answer action.');
-    const result=await createSmartReply(session.sourceMessage,session.language,mode,session.result.answer);updateSmartReplySession(sessionId,result);
-    return{content:clipDiscord(smartReplyContent(result,session.language),1900),components:smartReplyComponents(userId,sessionId,result,session.language),allowed_mentions:{parse:[]}};
+    const result=await createSmartReply(session.sourceMessage,session.language,mode,session.result.answer);updateSmartReplySession(sessionId,result);const display=await getDisplayRuntimeSettings();
+    return{content:clipDiscord(smartReplyContent(result,session.language,display),1900),components:smartReplyComponents(userId,sessionId,result,session.language),allowed_mentions:{parse:[]}};
   });
 }
 
@@ -151,15 +152,15 @@ export function handleAiTranslateTarget(interaction:DiscordInteraction):void{
   void runAndEdit(interaction,async()=>{
     const customId=interaction.data?.custom_id??'';const sessionId=customId.startsWith('ai_translate_target:')?customId.slice('ai_translate_target:'.length):'';const session=sessionId?getAiActionSession(sessionId):undefined;if(!session)throw new Error('This TD AI menu expired. Open it again from the message.');
     const userId=userIdOf(interaction);if(session.userId!==userId)throw new Error('This TD AI menu belongs to another user.');const prefs=await getPreference(userId);const selected=interaction.data?.values?.[0];const target=normalizeLanguage(selected==='my'||!selected?prefs.incoming:selected);
-    const translated=await translateText(session.message.content,target,{source:'auto',provider:prefs.provider,style:prefs.style});const source=translated.detectedSourceLanguage?` • from ${languageLabel(translated.detectedSourceLanguage)}`:'';
-    return{content:clipDiscord(`## 🌐 Translation\n**To:** ${languageLabel(target)}${source}\n\n${stabilizeRtl(translated.text,target)}`,1900),components:listenComponents(userId,translated.text,target),allowed_mentions:{parse:[]}};
+    const translated=await translateText(session.message.content,target,{source:'auto',provider:prefs.provider,style:prefs.style});const display=await getDisplayRuntimeSettings();const source=display.showDetectedLanguage&&translated.detectedSourceLanguage?` • from ${languageLabel(translated.detectedSourceLanguage)}`:'';const provider=display.showProvider&&translated.provider?` • ${translated.provider}`:'';
+    return{content:clipDiscord(`${heading(display)} ${icon(display,'🌐 ')}Translation\n**To:** ${languageLabel(target)}${source}${provider}${blockGap(display)}${stabilizeRtl(translated.text,target)}`,1900),components:listenComponents(userId,translated.text,target),allowed_mentions:{parse:[]}};
   });
 }
 
 export function handleAiSlash(interaction:DiscordInteraction):void{
   void runAndEdit(interaction,async()=>{
-    const userId=userIdOf(interaction);const prefs=await getPreference(userId);const action=(option(interaction,'action')??'ask') as AiAction;const text=option(interaction,'text')?.trim();if(!text)throw new Error('Text is required.');const requested=option(interaction,'language')??'my';const language=requested==='my'?prefs.incoming:normalizeLanguage(requested,true);const result=await runAiAction(action,text,language);
-    return{content:clipDiscord(`## ${actionLabel(action)}\n\n${stabilizeRtl(result,language)}`,1900),components:listenComponents(userId,result,language),allowed_mentions:{parse:[]}};
+    const userId=userIdOf(interaction);const prefs=await getPreference(userId);const action=(option(interaction,'action')??'ask') as AiAction;const text=option(interaction,'text')?.trim();if(!text)throw new Error('Text is required.');const requested=option(interaction,'language')??'my';const language=requested==='my'?prefs.incoming:normalizeLanguage(requested,true);const result=await runAiAction(action,text,language);const display=await getDisplayRuntimeSettings();
+    return{content:clipDiscord(`${heading(display)} ${actionLabel(action,display)}${blockGap(display)}${stabilizeRtl(result,language)}`,1900),components:listenComponents(userId,result,language),allowed_mentions:{parse:[]}};
   });
 }
 

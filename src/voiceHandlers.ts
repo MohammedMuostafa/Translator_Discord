@@ -34,14 +34,14 @@ export function handleVoiceChatCommand(interaction: DiscordInteraction): void {
 
         await editOriginalResponse(interaction.application_id, interaction.token, {
           content: [
-            '🎙️ **TD AI joined your voice channel.**',
+            '🎙️ **TD AI joined the voice channel.**',
             `Channel: **${joined.channelName}**`,
             `Language: **${chatLanguageLabel(language)}**`,
             `Engine: **${joined.mode === 'live' ? 'Gemini Live — low latency' : 'Cascade fallback'}**`,
             '',
-            joined.mode === 'live'
-              ? 'Talk normally. Your audio is streamed to the live model while you speak, so TD AI can start answering almost immediately after you stop.'
-              : 'Talk normally. TD AI transcribes, asks the text model, then generates speech.',
+            '👥 **Group Voice is enabled:** human members in the same voice channel can talk to TD AI and get answers.',
+            'TD AI processes one spoken turn at a time so overlapping voices are not mixed together.',
+            'The user who opened the session remains the session owner and controls `/voicechat leave`.',
             'Audio is processed temporarily and is not intentionally stored by this bot.'
           ].join('\n'),
           allowed_mentions: { parse: [] }
@@ -70,6 +70,9 @@ export function handleVoiceChatCommand(interaction: DiscordInteraction): void {
                 `Engine: **${status.mode === 'live' ? 'Gemini Live' : 'Cascade'}**`,
                 `Channel: <#${status.channelId}>`,
                 `Owner: <@${status.userId}>`,
+                `Speaker access: **${status.speakerAccess === 'everyone' ? 'Everyone in channel' : 'Owner only'}**`,
+                `Participants heard: **${status.participantCount ?? 0}**`,
+                status.activeSpeakerId ? `Current speaker: <@${status.activeSpeakerId}>` : '',
                 `Language: **${chatLanguageLabel(status.language ?? 'auto')}**`,
                 `State: **${status.busy ? 'Responding' : 'Listening'}**`,
                 `Context turns: **${status.turns ?? 0}**`,
