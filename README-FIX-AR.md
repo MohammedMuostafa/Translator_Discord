@@ -1,5 +1,18 @@
-# TD AI v3.5.1 — Railway Build Fix
+# TD AI v3.5.2 — Listen Fix
 
-يصلح خطأ TypeScript TS2322 في `src/services/geminiTts.ts` بعد تحديث v3.5.
+استبدل الملف:
 
-ارفع الملف بنفس المسار واستبدل النسخة الموجودة، ثم اعمل Commit. Railway سيعيد البناء تلقائيًا.
+`src/services/geminiTts.ts`
+
+ثم اعمل Commit:
+
+`Fix Gemini TTS Listen button`
+
+المشكلة كانت أن Gemini Interactions API الحالي لا يقبل
+`mime_type: audio/mp3` مع موديل TTS المستخدم.
+
+الإصلاح يطلب:
+
+`response_format: { type: "audio" }`
+
+ويتعامل مع نوع الصوت الذي يرجعه Gemini تلقائياً، بما في ذلك تحويل raw PCM/L16 إلى WAV قابل للتشغيل داخل Discord.
