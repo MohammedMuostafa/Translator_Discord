@@ -1,6 +1,7 @@
 export const InteractionType = {
   Ping: 1,
-  ApplicationCommand: 2
+  ApplicationCommand: 2,
+  MessageComponent: 3
 } as const;
 
 export const ApplicationCommandType = {
@@ -11,7 +12,9 @@ export const ApplicationCommandType = {
 export const InteractionResponseType = {
   Pong: 1,
   ChannelMessageWithSource: 4,
-  DeferredChannelMessageWithSource: 5
+  DeferredChannelMessageWithSource: 5,
+  DeferredUpdateMessage: 6,
+  UpdateMessage: 7
 } as const;
 
 export const MessageFlags = {

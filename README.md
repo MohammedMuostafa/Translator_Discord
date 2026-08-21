@@ -1,20 +1,14 @@
-# Discord User Translator v3
+# Discord User Translator v3.2
 
-A user-installed Discord translation app that works through interactions across servers, DMs and group DMs.
+A user-installed Discord translator focused on AI auto-detection, Egyptian Arabic, Modern Standard Arabic, Persian, and fast target selection.
 
-## Highlights
+## UX
 
-- Right-click message → Apps → Translate
-- `/translate` with source, target, provider and style choices
-- `/say` private copy mode so the final message can be sent by the human user
-- Arabic MSA and Egyptian Arabic modes
-- Persian / Farsi
-- LibreTranslate, Google, DeepL and optional OpenAI-compatible AI provider
-- Optional voice transcription/translation
-- Railway-friendly HTTP interactions deployment
+- `/translate`: type text first, choose target only; source is auto-detected.
+- `/say`: same flow, but returns a private copy-ready translation so the human user sends it from their own account.
+- Right-click message → Apps → Translate → select target language from an ephemeral menu.
+- `My language` target uses the user's saved `/settings my_language` preference.
+- AI/Gemini can distinguish Egyptian Arabic (`ar-eg`) vs MSA (`ar-msa`) and honor target dialect.
+- AI retries temporary 429/5xx errors; Auto mode can fall back to LibreTranslate.
 
-## Important Discord limitation
-
-Discord apps cannot impersonate a normal user account. `/say` therefore returns the translated text ephemerally for copy/paste. Automating a normal Discord user token is not supported by this project.
-
-See `UPGRADE-V3-AR.md` for the v3 upgrade steps.
+See `UPGRADE-V3.2-AR.md` for Arabic upgrade instructions.

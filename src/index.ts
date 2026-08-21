@@ -11,7 +11,8 @@ import {
   handleSay,
   handleSettings,
   handleStatus,
-  handleTranslateMessage,
+  handleTranslateMessagePicker,
+  handleTranslateMessageSelection,
   handleTranslateText,
   handleVoice
 } from './handlers.js';
@@ -25,11 +26,13 @@ app.disable('x-powered-by');
 const statusPayload = () => ({
   ok: true,
   service: 'discord-user-translator',
-  version: '3.0.0',
+  version: '3.2.0',
   interactionEndpoint: '/interactions',
   translationProvider: env.TRANSLATION_PROVIDER,
   aiConfigured: aiConfigured(),
-  voiceConfigured: Boolean(env.STT_URL && env.STT_API_KEY)
+  voiceConfigured: Boolean(env.STT_URL && env.STT_API_KEY),
+  sourceDetection: 'automatic',
+  arabicDialectDetection: aiConfigured() ? 'egyptian-vs-msa' : 'generic'
 });
 
 app.get('/', (_req, res) => res.json(statusPayload()));
@@ -42,6 +45,17 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
     return res.json({ type: InteractionResponseType.Pong });
   }
 
+  if (interaction.type === InteractionType.MessageComponent) {
+    const customId = interaction.data?.custom_id ?? '';
+    if (!customId.startsWith('translate_target:')) {
+      return res.status(400).json({ error: 'Unsupported component interaction.' });
+    }
+
+    res.json({ type: InteractionResponseType.DeferredUpdateMessage });
+    handleTranslateMessageSelection(interaction);
+    return;
+  }
+
   if (interaction.type !== InteractionType.ApplicationCommand || !interaction.data) {
     return res.status(400).json({ error: 'Unsupported interaction type.' });
   }
@@ -50,12 +64,19 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
   const name = interaction.data.name;
 
   if (commandType === ApplicationCommandType.Message && name === 'Translate') {
-    res.json({
-      type: InteractionResponseType.DeferredChannelMessageWithSource,
-      data: { flags: MessageFlags.Ephemeral }
-    });
-    handleTranslateMessage(interaction);
-    return;
+    try {
+      const payload = await handleTranslateMessagePicker(interaction);
+      return res.json({
+        type: InteractionResponseType.ChannelMessageWithSource,
+        data: { ...payload, flags: MessageFlags.Ephemeral }
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unexpected error.';
+      return res.json({
+        type: InteractionResponseType.ChannelMessageWithSource,
+        data: { content: `❌ ${message}`, flags: MessageFlags.Ephemeral }
+      });
+    }
   }
 
   if (commandType !== ApplicationCommandType.ChatInput) {
@@ -96,8 +117,6 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
   }
 
   if (name === 'say') {
-    // Intentionally private: the user copies the translated text and sends it from their own account.
-    // Discord does not permit apps to impersonate a normal user account.
     res.json({
       type: InteractionResponseType.DeferredChannelMessageWithSource,
       data: { flags: MessageFlags.Ephemeral }
@@ -122,7 +141,7 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
 });
 
 app.listen(env.PORT, env.HOST, () => {
-  console.log(`Discord User Translator v3 listening on ${env.HOST}:${env.PORT}`);
+  console.log(`Discord User Translator v3.2 listening on ${env.HOST}:${env.PORT}`);
   console.log('Interactions endpoint: /interactions');
 
   if (env.REGISTER_COMMANDS_ON_START && env.DISCORD_BOT_TOKEN) {

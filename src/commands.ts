@@ -1,4 +1,4 @@
-import { sourceLanguageChoices, targetLanguageChoices } from './languages.js';
+import { targetLanguageChoicesWithDefault } from './languages.js';
 
 const USER_INSTALL = 1;
 const GUILD = 0;
@@ -10,30 +10,22 @@ const common = {
   contexts: [GUILD, BOT_DM, PRIVATE_CHANNEL]
 };
 
-const sourceOption = (required = false) => ({
-  name: 'source',
-  description: 'Source language; Auto detect is the default',
-  type: 3,
-  required,
-  choices: sourceLanguageChoices
-});
-
-const targetOption = (description: string, required = false) => ({
+const targetOption = (description: string, required = true) => ({
   name: 'target',
   description,
   type: 3,
   required,
-  choices: targetLanguageChoices
+  choices: targetLanguageChoicesWithDefault()
 });
 
 const providerOption = {
   name: 'provider',
-  description: 'Translation engine; Default uses your configured provider',
+  description: 'Auto prefers AI and falls back when possible',
   type: 3,
   required: false,
   choices: [
-    { name: 'Default', value: 'default' },
-    { name: 'AI (best for Egyptian Arabic / style)', value: 'ai' },
+    { name: 'Auto — AI preferred', value: 'default' },
+    { name: 'AI / Gemini', value: 'ai' },
     { name: 'LibreTranslate', value: 'libretranslate' },
     { name: 'Google Translate', value: 'google' },
     { name: 'DeepL', value: 'deepl' }
@@ -42,20 +34,20 @@ const providerOption = {
 
 const styleOption = {
   name: 'style',
-  description: 'Translation style; non-Natural styles are best with AI',
+  description: 'Translation style; Natural is recommended',
   type: 3,
   required: false,
   choices: [
     { name: 'Natural', value: 'natural' },
-    { name: 'Literal', value: 'literal' },
     { name: 'Casual', value: 'casual' },
-    { name: 'Formal', value: 'formal' }
+    { name: 'Formal', value: 'formal' },
+    { name: 'Literal', value: 'literal' }
   ]
 };
 
 const textOption = {
   name: 'text',
-  description: 'Text to translate',
+  description: 'Type the text first — AI detects its language automatically',
   type: 3,
   required: true,
   max_length: 1800
@@ -70,21 +62,31 @@ export const commands = [
   {
     ...common,
     name: 'translate',
-    description: 'Translate text privately with source/target/provider choices',
+    description: 'Type text, choose only the target; source is detected automatically',
     type: 1,
-    options: [textOption, sourceOption(), targetOption('Target language; defaults to your incoming language'), providerOption, styleOption]
+    options: [
+      textOption,
+      targetOption('Translate to: Egyptian Arabic, MSA, English, Persian, etc.'),
+      styleOption,
+      providerOption
+    ]
   },
   {
     ...common,
     name: 'say',
-    description: 'Translate privately, then copy/paste it so YOU send the message',
+    description: 'Auto-detect your text, translate it, then copy/paste so YOU send it',
     type: 1,
-    options: [textOption, sourceOption(), targetOption('Target language; defaults to your outgoing language'), providerOption, styleOption]
+    options: [
+      textOption,
+      targetOption('Language you want to send'),
+      styleOption,
+      providerOption
+    ]
   },
   {
     ...common,
     name: 'voice',
-    description: 'Transcribe audio and return a private translation you can copy',
+    description: 'Transcribe audio, auto-detect language, and translate privately',
     type: 1,
     options: [
       {
@@ -93,30 +95,30 @@ export const commands = [
         type: 11,
         required: true
       },
-      targetOption('Target language; defaults to your outgoing language'),
-      providerOption,
-      styleOption
+      targetOption('Language you want the transcript translated to'),
+      styleOption,
+      providerOption
     ]
   },
   {
     ...common,
     name: 'settings',
-    description: 'Set your default translation targets, provider and style',
+    description: 'Set your language and default translation behavior',
     type: 1,
     options: [
       {
-        name: 'incoming',
-        description: 'Right-click Translate target',
+        name: 'my_language',
+        description: 'Used by “My language” and as the default right-click target',
         type: 3,
         required: false,
-        choices: targetLanguageChoices
+        choices: targetLanguageChoicesWithDefault('Keep current').filter((item) => item.value !== 'my')
       },
       {
         name: 'outgoing',
-        description: '/say and /voice target',
+        description: 'Default target for outgoing translations',
         type: 3,
         required: false,
-        choices: targetLanguageChoices
+        choices: targetLanguageChoicesWithDefault('Keep current').filter((item) => item.value !== 'my')
       },
       providerOption,
       styleOption

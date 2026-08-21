@@ -39,15 +39,26 @@ export function translationConfiguration(provider: TranslationProvider = env.TRA
   }
 }
 
-function resolveProvider(target: string, options: TranslationOptions): TranslationProvider {
+function resolveProvider(options: TranslationOptions): TranslationProvider {
   if (options.provider && options.provider !== 'default') return options.provider;
-
-  // AI is automatically preferred for dialect control or non-default writing styles when configured.
-  if (aiConfigured() && (isDialectLanguage(target) || isDialectLanguage(options.source ?? '') || (options.style && options.style !== 'natural'))) {
-    return 'ai';
-  }
-
+  // Auto mode is AI-first. This gives reliable auto-detection and Egyptian/MSA control.
+  if (aiConfigured()) return 'ai';
   return env.TRANSLATION_PROVIDER;
+}
+
+async function runProvider(
+  provider: TranslationProvider,
+  clean: string,
+  target: string,
+  source: string,
+  style: TranslationStyle
+): Promise<TranslationResult> {
+  switch (provider) {
+    case 'google': return translateGoogle(clean, target, source);
+    case 'deepl': return translateDeepL(clean, target, source);
+    case 'ai': return translateAI(clean, target, source, style);
+    case 'libretranslate': return translateLibre(clean, target, source);
+  }
 }
 
 export async function translateText(text: string, target: string, options: TranslationOptions = {}): Promise<TranslationResult> {
@@ -56,36 +67,26 @@ export async function translateText(text: string, target: string, options: Trans
 
   const source = options.source ?? 'auto';
   const style = options.style ?? 'natural';
-  const provider = resolveProvider(target, options);
+  const provider = resolveProvider(options);
   const config = translationConfiguration(provider);
 
-  if (!config.configured) {
-    throw new Error(`Translation provider '${provider}' is not configured yet.`);
-  }
+  if (!config.configured) throw new Error(`Translation provider '${provider}' is not configured yet.`);
 
   if (provider !== 'ai' && (isDialectLanguage(target) || style !== 'natural')) {
-    // Traditional MT engines use generic Arabic codes and cannot reliably guarantee Egyptian/MSA style.
-    // Keep the request functional, but make the limitation explicit by using the base language code.
     console.warn(`Provider '${provider}' cannot guarantee dialect/style '${target}/${style}'.`);
   }
 
-  let result: TranslationResult;
-  switch (provider) {
-    case 'google':
-      result = await translateGoogle(clean, target, source);
-      break;
-    case 'deepl':
-      result = await translateDeepL(clean, target, source);
-      break;
-    case 'ai':
-      result = await translateAI(clean, target, source, style);
-      break;
-    case 'libretranslate':
-      result = await translateLibre(clean, target, source);
-      break;
-    default:
-      throw new Error('Unsupported translation provider.');
+  try {
+    const result = await runProvider(provider, clean, target, source, style);
+    return { ...result, provider };
+  } catch (error) {
+    // Auto/default mode gets a practical free fallback when AI is temporarily overloaded.
+    const explicitProvider = options.provider && options.provider !== 'default';
+    if (!explicitProvider && provider === 'ai' && translationConfiguration('libretranslate').configured) {
+      console.warn(`AI translation failed; falling back to LibreTranslate: ${error instanceof Error ? error.message : error}`);
+      const fallback = await translateLibre(clean, target, source);
+      return { ...fallback, provider: 'libretranslate' };
+    }
+    throw error;
   }
-
-  return { ...result, provider };
 }

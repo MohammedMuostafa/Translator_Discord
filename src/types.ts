@@ -21,6 +21,13 @@ export type DiscordMessage = {
   attachments?: DiscordAttachment[];
 };
 
+export type DiscordInteractionOption = {
+  name: string;
+  type: number;
+  value: string | boolean;
+  focused?: boolean;
+};
+
 export type DiscordInteraction = {
   id: string;
   application_id: string;
@@ -36,7 +43,10 @@ export type DiscordInteraction = {
     name?: string;
     type?: number;
     target_id?: string;
-    options?: Array<{ name: string; type: number; value: string | boolean; focused?: boolean }>;
+    custom_id?: string;
+    component_type?: number;
+    values?: string[];
+    options?: DiscordInteractionOption[];
     resolved?: {
       messages?: Record<string, DiscordMessage>;
       attachments?: Record<string, DiscordAttachment>;

@@ -30,27 +30,27 @@ type LanguageDefinition = {
 };
 
 const LANGUAGES: LanguageDefinition[] = [
-  { code: 'auto', name: 'Auto detect', providerCode: 'auto', instruction: 'Automatically detect the source language.' },
-  { code: 'en', name: 'English', providerCode: 'en', instruction: 'English' },
-  { code: 'ar-msa', name: 'Arabic — Modern Standard (الفصحى)', providerCode: 'ar', instruction: 'Modern Standard Arabic (العربية الفصحى)', dialect: true },
-  { code: 'ar-eg', name: 'Arabic — Egyptian (مصري)', providerCode: 'ar', instruction: 'Natural Egyptian Arabic dialect (العامية المصرية)', dialect: true },
-  { code: 'fa', name: 'Persian / Farsi (فارسی)', providerCode: 'fa', instruction: 'Persian (Farsi)' },
-  { code: 'fr', name: 'French', providerCode: 'fr', instruction: 'French' },
-  { code: 'de', name: 'German', providerCode: 'de', instruction: 'German' },
-  { code: 'es', name: 'Spanish', providerCode: 'es', instruction: 'Spanish' },
-  { code: 'it', name: 'Italian', providerCode: 'it', instruction: 'Italian' },
-  { code: 'pt', name: 'Portuguese', providerCode: 'pt', instruction: 'Portuguese' },
-  { code: 'ru', name: 'Russian', providerCode: 'ru', instruction: 'Russian' },
-  { code: 'tr', name: 'Turkish', providerCode: 'tr', instruction: 'Turkish' },
-  { code: 'nl', name: 'Dutch', providerCode: 'nl', instruction: 'Dutch' },
-  { code: 'pl', name: 'Polish', providerCode: 'pl', instruction: 'Polish' },
-  { code: 'zh', name: 'Chinese', providerCode: 'zh', instruction: 'Chinese' },
-  { code: 'ja', name: 'Japanese', providerCode: 'ja', instruction: 'Japanese' },
-  { code: 'ko', name: 'Korean', providerCode: 'ko', instruction: 'Korean' },
-  { code: 'hi', name: 'Hindi', providerCode: 'hi', instruction: 'Hindi' },
-  { code: 'id', name: 'Indonesian', providerCode: 'id', instruction: 'Indonesian' },
-  { code: 'vi', name: 'Vietnamese', providerCode: 'vi', instruction: 'Vietnamese' },
-  { code: 'he', name: 'Hebrew', providerCode: 'he', instruction: 'Hebrew' }
+  { code: 'auto', name: 'Auto detect', providerCode: 'auto', instruction: 'Automatically detect the source language and dialect.' },
+  { code: 'en', name: 'English', providerCode: 'en', instruction: 'natural English' },
+  { code: 'ar-eg', name: 'Arabic — Egyptian (مصري)', providerCode: 'ar', instruction: 'natural Egyptian Arabic dialect (العامية المصرية), not Modern Standard Arabic', dialect: true },
+  { code: 'ar-msa', name: 'Arabic — Modern Standard (الفصحى)', providerCode: 'ar', instruction: 'Modern Standard Arabic (العربية الفصحى), clear and natural', dialect: true },
+  { code: 'fa', name: 'Persian / Farsi (فارسی)', providerCode: 'fa', instruction: 'natural Persian (Farsi)' },
+  { code: 'fr', name: 'French', providerCode: 'fr', instruction: 'natural French' },
+  { code: 'de', name: 'German', providerCode: 'de', instruction: 'natural German' },
+  { code: 'es', name: 'Spanish', providerCode: 'es', instruction: 'natural Spanish' },
+  { code: 'it', name: 'Italian', providerCode: 'it', instruction: 'natural Italian' },
+  { code: 'pt', name: 'Portuguese', providerCode: 'pt', instruction: 'natural Portuguese' },
+  { code: 'ru', name: 'Russian', providerCode: 'ru', instruction: 'natural Russian' },
+  { code: 'tr', name: 'Turkish', providerCode: 'tr', instruction: 'natural Turkish' },
+  { code: 'nl', name: 'Dutch', providerCode: 'nl', instruction: 'natural Dutch' },
+  { code: 'pl', name: 'Polish', providerCode: 'pl', instruction: 'natural Polish' },
+  { code: 'zh', name: 'Chinese', providerCode: 'zh', instruction: 'natural Simplified Chinese' },
+  { code: 'ja', name: 'Japanese', providerCode: 'ja', instruction: 'natural Japanese' },
+  { code: 'ko', name: 'Korean', providerCode: 'ko', instruction: 'natural Korean' },
+  { code: 'hi', name: 'Hindi', providerCode: 'hi', instruction: 'natural Hindi' },
+  { code: 'id', name: 'Indonesian', providerCode: 'id', instruction: 'natural Indonesian' },
+  { code: 'vi', name: 'Vietnamese', providerCode: 'vi', instruction: 'natural Vietnamese' },
+  { code: 'he', name: 'Hebrew', providerCode: 'he', instruction: 'natural Hebrew' }
 ];
 
 const BY_CODE = new Map(LANGUAGES.map((language) => [language.code, language]));
@@ -80,7 +80,29 @@ const ALIASES: Record<string, LanguageCode> = {
 };
 
 export const sourceLanguageChoices = LANGUAGES.map(({ name, code }) => ({ name, value: code }));
-export const targetLanguageChoices = LANGUAGES.filter((language) => language.code !== 'auto').map(({ name, code }) => ({ name, value: code }));
+export const targetLanguageChoices = LANGUAGES
+  .filter((language) => language.code !== 'auto')
+  .map(({ name, code }) => ({ name, value: code }));
+
+export function targetLanguageChoicesWithDefault(label = 'My language (default)') {
+  return [{ name: label, value: 'my' }, ...targetLanguageChoices];
+}
+
+export function targetSelectOptions(defaultLanguage: string) {
+  const defaultLabel = languageLabel(defaultLanguage);
+  return [
+    { label: `My language — ${defaultLabel}`.slice(0, 100), value: 'my', description: 'Use your saved incoming language' },
+    ...LANGUAGES.filter((language) => language.code !== 'auto').map((language) => ({
+      label: language.name.slice(0, 100),
+      value: language.code,
+      ...(language.code === 'ar-eg'
+        ? { description: 'Natural Egyptian Arabic / العامية المصرية' }
+        : language.code === 'ar-msa'
+          ? { description: 'Modern Standard Arabic / العربية الفصحى' }
+          : {})
+    }))
+  ];
+}
 
 export function normalizeLanguage(input: string, allowAuto = false): string {
   const clean = input.trim().toLowerCase().replaceAll('_', '-').replaceAll(' ', '');
@@ -107,4 +129,8 @@ export function languageInstruction(code: string): string {
 export function isDialectLanguage(code: string): boolean {
   const normalized = normalizeLanguage(code, true) as LanguageCode;
   return Boolean(BY_CODE.get(normalized)?.dialect);
+}
+
+export function isKnownLanguageCode(code: string): code is LanguageCode {
+  return BY_CODE.has(code as LanguageCode);
 }
