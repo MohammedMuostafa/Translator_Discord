@@ -33,6 +33,11 @@ const schema = z.object({
   AI_API_KEY: optionalString,
   AI_MODEL: optionalString,
 
+  // Private interactive DM AI chat. Memory is kept only in RAM and auto-expires.
+  CHAT_SESSION_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(120),
+  CHAT_MAX_HISTORY: z.coerce.number().int().min(2).max(100).default(20),
+  CHAT_MAX_INPUT_CHARS: z.coerce.number().int().min(200).max(20000).default(6000),
+
   // Gemini TTS. If GEMINI_TTS_API_KEY is omitted, AI_API_KEY is reused.
   GEMINI_TTS_API_KEY: optionalString,
   GEMINI_TTS_MODEL: z.string().min(1).default('gemini-3.1-flash-tts-preview'),

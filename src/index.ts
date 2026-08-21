@@ -17,9 +17,11 @@ import {
   handleTranslateText,
   handleVoice
 } from './handlers.js';
+import { handleChatCommand } from './chatHandlers.js';
 import type { DiscordInteraction } from './types.js';
 import { registerGlobalCommands } from './registerCommands.js';
 import { aiConfigured } from './providers/translator.js';
+import { gatewayChatConfigured, startGatewayChat } from './services/gatewayChat.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -27,10 +29,12 @@ app.disable('x-powered-by');
 const statusPayload = () => ({
   ok: true,
   service: 'discord-user-translator',
-  version: '3.4.0',
+  version: '3.5.0',
   interactionEndpoint: '/interactions',
   translationProvider: env.TRANSLATION_PROVIDER,
   aiConfigured: aiConfigured(),
+  interactiveDmChat: gatewayChatConfigured(),
+  chatSessionTtlMinutes: env.CHAT_SESSION_TTL_MINUTES,
   voiceConfigured: Boolean(env.STT_URL && env.STT_API_KEY),
   listenTts: Boolean((env.GEMINI_TTS_API_KEY ?? env.AI_API_KEY) && env.GEMINI_TTS_MODEL),
   sourceDetection: 'automatic',
@@ -119,6 +123,15 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
     });
   }
 
+  if (name === 'chat') {
+    res.json({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
+    });
+    handleChatCommand(interaction);
+    return;
+  }
+
   if (name === 'translate') {
     res.json({
       type: InteractionResponseType.DeferredChannelMessageWithSource,
@@ -153,8 +166,12 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
 });
 
 app.listen(env.PORT, env.HOST, () => {
-  console.log(`Discord User Translator v3.4 listening on ${env.HOST}:${env.PORT}`);
+  console.log(`TD AI / Translator Discord v3.5 listening on ${env.HOST}:${env.PORT}`);
   console.log('Interactions endpoint: /interactions');
+
+  void startGatewayChat().catch((error) => {
+    console.error('Could not start interactive DM chat:', error instanceof Error ? error.message : error);
+  });
 
   if (env.REGISTER_COMMANDS_ON_START && env.DISCORD_BOT_TOKEN) {
     void registerGlobalCommands(env.DISCORD_APP_ID, env.DISCORD_BOT_TOKEN).catch((error) => {

@@ -53,6 +53,20 @@ const textOption = {
   max_length: 1800
 };
 
+const chatLanguageOption = {
+  name: 'language',
+  description: 'How TD AI should reply during this chat session',
+  type: 3,
+  required: false,
+  choices: [
+    { name: 'Auto — follow my language', value: 'auto' },
+    { name: 'Egyptian Arabic', value: 'ar-eg' },
+    { name: 'Modern Standard Arabic', value: 'ar-msa' },
+    { name: 'English', value: 'en' },
+    { name: 'Persian / Farsi', value: 'fa' }
+  ]
+};
+
 export const commands = [
   {
     ...common,
@@ -98,6 +112,35 @@ export const commands = [
       targetOption('Language you want the transcript translated to'),
       styleOption,
       providerOption
+    ]
+  },
+  {
+    ...common,
+    name: 'chat',
+    description: 'Open or manage a private persistent TD AI chat in DMs',
+    type: 1,
+    options: [
+      {
+        name: 'open',
+        description: 'Open a private AI chat; then type normally in the DM',
+        type: 1,
+        options: [chatLanguageOption]
+      },
+      {
+        name: 'close',
+        description: 'Close the AI chat and delete its temporary conversation memory',
+        type: 1
+      },
+      {
+        name: 'reset',
+        description: 'Clear the current conversation context but keep the chat open',
+        type: 1
+      },
+      {
+        name: 'status',
+        description: 'Show your current private AI chat status',
+        type: 1
+      }
     ]
   },
   {

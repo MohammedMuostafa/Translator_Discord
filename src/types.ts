@@ -24,7 +24,8 @@ export type DiscordMessage = {
 export type DiscordInteractionOption = {
   name: string;
   type: number;
-  value: string | boolean;
+  value?: string | boolean;
+  options?: DiscordInteractionOption[];
   focused?: boolean;
 };
 
