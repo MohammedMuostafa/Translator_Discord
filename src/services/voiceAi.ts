@@ -13,7 +13,7 @@ import {
   type AudioPlayer,
   type VoiceConnection
 } from '@discordjs/voice';
-import { GoogleGenAI, Modality, type LiveServerMessage } from '@google/genai';
+import { GoogleGenAI, Modality, ThinkingLevel, type LiveServerMessage } from '@google/genai';
 import type { VoiceBasedChannel } from 'discord.js';
 import { env } from '../config.js';
 import { askAiChat, type ChatResponseLanguage, type ChatTurn } from './aiChat.js';
@@ -64,6 +64,20 @@ const sessions = new Map<string, VoiceAiSession>();
 
 function liveApiKey(): string | undefined {
   return env.GEMINI_LIVE_API_KEY ?? env.AI_API_KEY;
+}
+
+function liveThinkingLevel(): ThinkingLevel {
+  switch (env.GEMINI_LIVE_THINKING_LEVEL) {
+    case 'low':
+      return ThinkingLevel.LOW;
+    case 'medium':
+      return ThinkingLevel.MEDIUM;
+    case 'high':
+      return ThinkingLevel.HIGH;
+    case 'minimal':
+    default:
+      return ThinkingLevel.MINIMAL;
+  }
 }
 
 function errorMessage(error: unknown): string {
@@ -275,7 +289,7 @@ async function connectGeminiLive(session: VoiceAiSession): Promise<void> {
         }
       },
       thinkingConfig: {
-        thinkingLevel: env.GEMINI_LIVE_THINKING_LEVEL
+        thinkingLevel: liveThinkingLevel()
       },
       inputAudioTranscription: {},
       outputAudioTranscription: {},

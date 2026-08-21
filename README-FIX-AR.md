@@ -1,18 +1,18 @@
-# TD AI v3.5.2 — Listen Fix
+# TD AI v3.8.1 — TypeScript Build Fix
 
-استبدل الملف:
+المشكلة:
+`@google/genai` يتوقع `ThinkingLevel` enum وليس string مباشرة.
 
-`src/services/geminiTts.ts`
+الإصلاح:
+- استيراد `ThinkingLevel`
+- تحويل `minimal | low | medium | high` إلى:
+  - `ThinkingLevel.MINIMAL`
+  - `ThinkingLevel.LOW`
+  - `ThinkingLevel.MEDIUM`
+  - `ThinkingLevel.HIGH`
 
-ثم اعمل Commit:
+ارفع الملف:
+`src/services/voiceAi.ts`
 
-`Fix Gemini TTS Listen button`
-
-المشكلة كانت أن Gemini Interactions API الحالي لا يقبل
-`mime_type: audio/mp3` مع موديل TTS المستخدم.
-
-الإصلاح يطلب:
-
-`response_format: { type: "audio" }`
-
-ويتعامل مع نوع الصوت الذي يرجعه Gemini تلقائياً، بما في ذلك تحويل raw PCM/L16 إلى WAV قابل للتشغيل داخل Discord.
+Commit:
+`Fix Gemini Live ThinkingLevel build v3.8.1`
