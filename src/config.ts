@@ -29,40 +29,47 @@ const schema = z.object({
   DEEPL_API_KEY: optionalString,
   DEEPL_API_URL: z.string().url().default('https://api-free.deepl.com/v2/translate'),
 
-  // Generic OpenAI-compatible endpoint used by translation, /ai and DM chat.
   AI_API_URL: optionalUrl,
   AI_API_KEY: optionalString,
   AI_MODEL: optionalString,
   AI_ACTION_MAX_CHARS: z.coerce.number().int().min(500).max(20000).default(8000),
   AI_ACTION_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(180_000).default(60_000),
 
-  // Optional model dedicated to voice reasoning. Falls back to AI_MODEL.
   VOICE_AI_MODEL: optionalString,
 
-  // Private interactive DM AI chat. Memory is RAM-only and auto-expires.
   CHAT_SESSION_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(120),
   CHAT_MAX_HISTORY: z.coerce.number().int().min(2).max(100).default(20),
   CHAT_MAX_INPUT_CHARS: z.coerce.number().int().min(200).max(20000).default(6000),
 
-  // Gemini TTS. If GEMINI_TTS_API_KEY is omitted, AI_API_KEY is reused.
   GEMINI_TTS_API_KEY: optionalString,
   GEMINI_TTS_MODEL: z.string().min(1).default('gemini-3.1-flash-tts-preview'),
   GEMINI_TTS_VOICE: z.string().min(1).default('Kore'),
   TTS_MAX_CHARS: z.coerce.number().int().min(100).max(10000).default(4000),
   TTS_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(300_000).default(120_000),
 
-  // Live voice AI.
-  VOICE_AI_SILENCE_MS: z.coerce.number().int().min(500).max(5000).default(1100),
+  // Voice engine.
+  // live = Gemini Live audio-to-audio (lowest latency)
+  // cascade = STT -> text AI -> TTS fallback
+  VOICE_AI_MODE: z.enum(['live', 'cascade']).default('live'),
+
+  // Gemini Live uses one persistent WebSocket per active voice conversation.
+  // If GEMINI_LIVE_API_KEY is empty, AI_API_KEY is reused.
+  GEMINI_LIVE_API_KEY: optionalString,
+  GEMINI_LIVE_MODEL: z.string().min(1).default('gemini-3.1-flash-live-preview'),
+  GEMINI_LIVE_VOICE: z.string().min(1).default('Kore'),
+  GEMINI_LIVE_THINKING_LEVEL: z.enum(['minimal', 'low', 'medium', 'high']).default('minimal'),
+
+  // Discord speaking detection closes the user's turn after this silence.
+  // ~250-350ms gives a fast "I stopped talking -> answer" feel.
+  VOICE_AI_SILENCE_MS: z.coerce.number().int().min(200).max(5000).default(300),
   VOICE_AI_MAX_UTTERANCE_SECONDS: z.coerce.number().int().min(5).max(120).default(35),
   VOICE_AI_MAX_HISTORY: z.coerce.number().int().min(2).max(40).default(12),
 
-  // Speech-to-text. "auto" uses the private STT service first and falls back to
-  // Gemini audio understanding if the service is unavailable.
   STT_PROVIDER: z.enum(['auto', 'service', 'gemini']).default('auto'),
   STT_URL: optionalUrl,
   STT_API_KEY: optionalString,
   GEMINI_STT_API_KEY: optionalString,
-  GEMINI_STT_MODEL: z.string().min(1).default('gemini-3.7-flash'),
+  GEMINI_STT_MODEL: z.string().min(1).default('gemini-3.1-flash-lite'),
   MAX_AUDIO_BYTES: z.coerce.number().int().positive().default(15 * 1024 * 1024),
 
   DATA_DIR: z.string().default('./data'),

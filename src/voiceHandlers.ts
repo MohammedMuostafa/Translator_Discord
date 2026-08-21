@@ -31,14 +31,18 @@ export function handleVoiceChatCommand(interaction: DiscordInteraction): void {
       if (action === 'join') {
         const language = (nestedString(subcommand, 'language') ?? 'auto') as ChatResponseLanguage;
         const joined = await joinVoiceAi(guildId, userId, language);
+
         await editOriginalResponse(interaction.application_id, interaction.token, {
           content: [
             '🎙️ **TD AI joined your voice channel.**',
             `Channel: **${joined.channelName}**`,
             `Language: **${chatLanguageLabel(language)}**`,
+            `Engine: **${joined.mode === 'live' ? 'Gemini Live — low latency' : 'Cascade fallback'}**`,
             '',
-            'Talk normally. TD AI listens only to **you**, converts your speech to text, asks the AI, then answers by voice.',
-            'Audio is processed temporarily in memory and is not intentionally stored by this bot.'
+            joined.mode === 'live'
+              ? 'Talk normally. Your audio is streamed to the live model while you speak, so TD AI can start answering almost immediately after you stop.'
+              : 'Talk normally. TD AI transcribes, asks the text model, then generates speech.',
+            'Audio is processed temporarily and is not intentionally stored by this bot.'
           ].join('\n'),
           allowed_mentions: { parse: [] }
         });
@@ -49,7 +53,7 @@ export function handleVoiceChatCommand(interaction: DiscordInteraction): void {
         const left = leaveVoiceAi(guildId, userId);
         await editOriginalResponse(interaction.application_id, interaction.token, {
           content: left
-            ? '✅ **TD AI left the voice channel.** Temporary voice conversation memory was cleared.'
+            ? '✅ **TD AI left the voice channel.** Temporary voice conversation state was cleared.'
             : 'ℹ️ TD AI is not currently in a voice session on this server.',
           allowed_mentions: { parse: [] }
         });
@@ -63,12 +67,15 @@ export function handleVoiceChatCommand(interaction: DiscordInteraction): void {
             ? [
                 '🎙️ **TD AI Voice Chat**',
                 'Status: **Active**',
+                `Engine: **${status.mode === 'live' ? 'Gemini Live' : 'Cascade'}**`,
                 `Channel: <#${status.channelId}>`,
                 `Owner: <@${status.userId}>`,
                 `Language: **${chatLanguageLabel(status.language ?? 'auto')}**`,
-                `State: **${status.busy ? 'Thinking / speaking' : 'Listening'}**`,
-                `Context turns: **${status.turns ?? 0}**`
-              ].join('\n')
+                `State: **${status.busy ? 'Responding' : 'Listening'}**`,
+                `Context turns: **${status.turns ?? 0}**`,
+                status.inputTranscript ? `Heard: ${status.inputTranscript.slice(0, 250)}` : '',
+                status.outputTranscript ? `Last reply: ${status.outputTranscript.slice(0, 250)}` : ''
+              ].filter(Boolean).join('\n')
             : '🎙️ **TD AI Voice Chat**\nStatus: **Closed**\nJoin a voice channel and use `/voicechat join`.',
           allowed_mentions: { parse: [] }
         });
