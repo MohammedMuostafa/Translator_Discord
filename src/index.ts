@@ -17,6 +17,7 @@ import {
 } from './handlers.js';
 import type { DiscordInteraction } from './types.js';
 import { registerGlobalCommands } from './registerCommands.js';
+import { aiConfigured } from './providers/translator.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -24,13 +25,13 @@ app.disable('x-powered-by');
 const statusPayload = () => ({
   ok: true,
   service: 'discord-user-translator',
-  version: '2.0.0',
+  version: '3.0.0',
   interactionEndpoint: '/interactions',
   translationProvider: env.TRANSLATION_PROVIDER,
+  aiConfigured: aiConfigured(),
   voiceConfigured: Boolean(env.STT_URL && env.STT_API_KEY)
 });
 
-// Friendly root route so opening the Railway domain does not show "Cannot GET /".
 app.get('/', (_req, res) => res.json(statusPayload()));
 app.get('/health', (_req, res) => res.json(statusPayload()));
 
@@ -95,18 +96,20 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
   }
 
   if (name === 'say') {
-    // User-installed apps may be forced to reply ephemerally when a server disables
-    // "Use External Apps". Discord controls that behavior.
-    res.json({ type: InteractionResponseType.DeferredChannelMessageWithSource });
+    // Intentionally private: the user copies the translated text and sends it from their own account.
+    // Discord does not permit apps to impersonate a normal user account.
+    res.json({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
+    });
     handleSay(interaction);
     return;
   }
 
   if (name === 'voice') {
-    const send = interaction.data.options?.find((item) => item.name === 'send')?.value === true;
     res.json({
       type: InteractionResponseType.DeferredChannelMessageWithSource,
-      ...(send ? {} : { data: { flags: MessageFlags.Ephemeral } })
+      data: { flags: MessageFlags.Ephemeral }
     });
     handleVoice(interaction);
     return;
@@ -119,7 +122,7 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
 });
 
 app.listen(env.PORT, env.HOST, () => {
-  console.log(`Discord User Translator v2 listening on ${env.HOST}:${env.PORT}`);
+  console.log(`Discord User Translator v3 listening on ${env.HOST}:${env.PORT}`);
   console.log('Interactions endpoint: /interactions');
 
   if (env.REGISTER_COMMANDS_ON_START && env.DISCORD_BOT_TOKEN) {

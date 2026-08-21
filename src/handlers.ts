@@ -1,7 +1,13 @@
 import type { DiscordAttachment, DiscordInteraction, DiscordMessage } from './types.js';
 import { clipDiscord, editOriginalResponse } from './discord.js';
-import { normalizeLanguage } from './languages.js';
-import { translateText, translationConfiguration } from './providers/translator.js';
+import { languageLabel, normalizeLanguage } from './languages.js';
+import {
+  aiConfigured,
+  translateText,
+  translationConfiguration,
+  type TranslationProvider,
+  type TranslationStyle
+} from './providers/translator.js';
 import { env } from './config.js';
 import { transcribeDiscordAttachment } from './services/stt.js';
 import { getPreference, updatePreference } from './storage/preferences.js';
@@ -28,9 +34,27 @@ function targetAttachment(interaction: DiscordInteraction, optionName = 'audio')
   return interaction.data?.resolved?.attachments?.[attachmentId];
 }
 
-function formatTranslation(input: string, translated: string, target: string, source?: string): string {
-  const detected = source ? ` • detected: ${source}` : '';
-  return clipDiscord(`🌐 **${target.toUpperCase()}**${detected}\n${translated}\n\n> ${clipDiscord(input, 500)}`);
+function safeCodeBlock(text: string): string {
+  return text.replaceAll('```', 'ˋˋˋ');
+}
+
+function formatTranslation(
+  input: string,
+  translated: string,
+  target: string,
+  source?: string,
+  provider?: string
+): string {
+  const detected = source ? ` • from: ${languageLabel(source)}` : '';
+  const engine = provider ? ` • ${provider}` : '';
+  return clipDiscord(`🌐 **${languageLabel(target)}**${detected}${engine}\n${translated}\n\n> ${clipDiscord(input, 500)}`);
+}
+
+function formatCopyTranslation(translated: string, target: string, provider?: string): string {
+  return clipDiscord(
+    `✍️ **Copy this and send it yourself — ${languageLabel(target)}${provider ? ` • ${provider}` : ''}:**\n\n\`\`\`text\n${safeCodeBlock(translated)}\n\`\`\`\n` +
+      `Discord apps cannot send a message as your personal user account; pasting this into the composer keeps the message authored by you.`
+  );
 }
 
 async function runAndEdit(
@@ -48,6 +72,14 @@ async function runAndEdit(
       allowed_mentions: { parse: [] }
     }).catch(console.error);
   }
+}
+
+function requestOptions(interaction: DiscordInteraction, defaults: { provider: TranslationProvider | 'default'; style: TranslationStyle }) {
+  return {
+    source: normalizeLanguage(option<string>(interaction, 'source') ?? 'auto', true),
+    provider: (option<string>(interaction, 'provider') as TranslationProvider | 'default' | undefined) ?? defaults.provider,
+    style: (option<string>(interaction, 'style') as TranslationStyle | undefined) ?? defaults.style
+  };
 }
 
 export function handleTranslateMessage(interaction: DiscordInteraction): void {
@@ -70,10 +102,14 @@ export function handleTranslateMessage(interaction: DiscordInteraction): void {
       spokenLanguage = transcript.language;
     }
 
-    const translated = await translateText(sourceText, prefs.incoming);
+    const translated = await translateText(sourceText, prefs.incoming, {
+      source: spokenLanguage ?? 'auto',
+      provider: prefs.provider,
+      style: prefs.style
+    });
     const source = translated.detectedSourceLanguage ?? spokenLanguage;
     return {
-      content: formatTranslation(sourceText, translated.text, prefs.incoming, source),
+      content: formatTranslation(sourceText, translated.text, prefs.incoming, source, translated.provider),
       allowed_mentions: { parse: [] }
     };
   });
@@ -86,9 +122,10 @@ export function handleTranslateText(interaction: DiscordInteraction): void {
     const text = option<string>(interaction, 'text')?.trim();
     if (!text) throw new Error('Text is required.');
     const target = normalizeLanguage(option<string>(interaction, 'target') ?? prefs.incoming);
-    const translated = await translateText(text, target);
+    const options = requestOptions(interaction, prefs);
+    const translated = await translateText(text, target, options);
     return {
-      content: formatTranslation(text, translated.text, target, translated.detectedSourceLanguage),
+      content: formatTranslation(text, translated.text, target, translated.detectedSourceLanguage ?? options.source, translated.provider),
       allowed_mentions: { parse: [] }
     };
   });
@@ -101,9 +138,9 @@ export function handleSay(interaction: DiscordInteraction): void {
     const text = option<string>(interaction, 'text')?.trim();
     if (!text) throw new Error('Text is required.');
     const target = normalizeLanguage(option<string>(interaction, 'target') ?? prefs.outgoing);
-    const translated = await translateText(text, target);
+    const translated = await translateText(text, target, requestOptions(interaction, prefs));
     return {
-      content: clipDiscord(translated.text),
+      content: formatCopyTranslation(translated.text, target, translated.provider),
       allowed_mentions: { parse: [] }
     };
   });
@@ -117,10 +154,15 @@ export function handleVoice(interaction: DiscordInteraction): void {
     if (!attachment) throw new Error('Audio attachment is required.');
     const target = normalizeLanguage(option<string>(interaction, 'target') ?? prefs.outgoing);
     const transcript = await transcribeDiscordAttachment(attachment);
-    const translated = await translateText(transcript.text, target);
+    const options = requestOptions(interaction, prefs);
+    const translated = await translateText(transcript.text, target, {
+      ...options,
+      source: transcript.language ?? 'auto'
+    });
     return {
       content: clipDiscord(
-        `🎙️ **Transcript${transcript.language ? ` (${transcript.language})` : ''}:** ${transcript.text}\n\n🌐 **${target.toUpperCase()}:** ${translated.text}`
+        `🎙️ **Transcript${transcript.language ? ` (${languageLabel(transcript.language)})` : ''}:** ${transcript.text}\n\n` +
+          formatCopyTranslation(translated.text, target, translated.provider)
       ),
       allowed_mentions: { parse: [] }
     };
@@ -131,29 +173,41 @@ export async function handleSettings(interaction: DiscordInteraction): Promise<R
   const userId = userIdOf(interaction);
   const incoming = option<string>(interaction, 'incoming');
   const outgoing = option<string>(interaction, 'outgoing');
+  const provider = option<string>(interaction, 'provider') as TranslationProvider | 'default' | undefined;
+  const style = option<string>(interaction, 'style') as TranslationStyle | undefined;
 
-  const prefs = incoming || outgoing
+  const prefs = incoming || outgoing || provider || style
     ? await updatePreference(userId, {
         ...(incoming ? { incoming } : {}),
-        ...(outgoing ? { outgoing } : {})
+        ...(outgoing ? { outgoing } : {}),
+        ...(provider ? { provider } : {}),
+        ...(style ? { style } : {})
       })
     : await getPreference(userId);
 
   return {
-    content: `⚙️ Incoming translations → **${prefs.incoming.toUpperCase()}**\nOutgoing /say & /voice → **${prefs.outgoing.toUpperCase()}**`,
+    content: [
+      `⚙️ Incoming translations → **${languageLabel(prefs.incoming)}**`,
+      `Outgoing /say & /voice → **${languageLabel(prefs.outgoing)}**`,
+      `Engine → **${prefs.provider}**`,
+      `Style → **${prefs.style}**`
+    ].join('\n'),
     allowed_mentions: { parse: [] }
   };
 }
+
 export function handleStatus(): Record<string, unknown> {
   const translation = translationConfiguration();
   const voiceConfigured = Boolean(env.STT_URL && env.STT_API_KEY);
   return {
     content: [
       '✅ **Discord endpoint:** online',
-      `🌐 **Translation:** ${translation.provider} — ${translation.configured ? 'configured' : 'not configured'}`,
+      `🌐 **Default translation:** ${translation.provider} — ${translation.configured ? 'configured' : 'not configured'}`,
+      `🤖 **AI translation:** ${aiConfigured() ? 'configured' : 'not configured'}`,
       `🎙️ **Voice:** ${voiceConfigured ? 'configured' : 'not configured'}`,
-      `⬇️ **Incoming target:** ${env.DEFAULT_INCOMING_LANGUAGE.toUpperCase()}`,
-      `⬆️ **Outgoing target:** ${env.DEFAULT_OUTGOING_LANGUAGE.toUpperCase()}`
+      `⬇️ **Incoming target:** ${languageLabel(env.DEFAULT_INCOMING_LANGUAGE)}`,
+      `⬆️ **Outgoing target:** ${languageLabel(env.DEFAULT_OUTGOING_LANGUAGE)}`,
+      '👤 **Send-as-user:** copy/paste mode (Discord does not allow apps to impersonate your user account)'
     ].join('\n'),
     allowed_mentions: { parse: [] }
   };

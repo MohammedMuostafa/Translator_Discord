@@ -1,24 +1,65 @@
-// Discord API constants.
+import { sourceLanguageChoices, targetLanguageChoices } from './languages.js';
+
 const USER_INSTALL = 1;
 const GUILD = 0;
 const BOT_DM = 1;
 const PRIVATE_CHANNEL = 2;
 
-// Every command belongs to the user installation and is usable in servers, app DMs,
-// normal DMs, and group DMs. This is what makes the app follow your Discord account.
 const common = {
   integration_types: [USER_INSTALL],
   contexts: [GUILD, BOT_DM, PRIVATE_CHANNEL]
 };
 
-const languageOption = (name: string, description: string, required = false) => ({
-  name,
+const sourceOption = (required = false) => ({
+  name: 'source',
+  description: 'Source language; Auto detect is the default',
+  type: 3,
+  required,
+  choices: sourceLanguageChoices
+});
+
+const targetOption = (description: string, required = false) => ({
+  name: 'target',
   description,
   type: 3,
   required,
-  min_length: 2,
-  max_length: 32
+  choices: targetLanguageChoices
 });
+
+const providerOption = {
+  name: 'provider',
+  description: 'Translation engine; Default uses your configured provider',
+  type: 3,
+  required: false,
+  choices: [
+    { name: 'Default', value: 'default' },
+    { name: 'AI (best for Egyptian Arabic / style)', value: 'ai' },
+    { name: 'LibreTranslate', value: 'libretranslate' },
+    { name: 'Google Translate', value: 'google' },
+    { name: 'DeepL', value: 'deepl' }
+  ]
+};
+
+const styleOption = {
+  name: 'style',
+  description: 'Translation style; non-Natural styles are best with AI',
+  type: 3,
+  required: false,
+  choices: [
+    { name: 'Natural', value: 'natural' },
+    { name: 'Literal', value: 'literal' },
+    { name: 'Casual', value: 'casual' },
+    { name: 'Formal', value: 'formal' }
+  ]
+};
+
+const textOption = {
+  name: 'text',
+  description: 'Text to translate',
+  type: 3,
+  required: true,
+  max_length: 1800
+};
 
 export const commands = [
   {
@@ -29,39 +70,21 @@ export const commands = [
   {
     ...common,
     name: 'translate',
-    description: 'Translate text privately',
+    description: 'Translate text privately with source/target/provider choices',
     type: 1,
-    options: [
-      {
-        name: 'text',
-        description: 'Text to translate',
-        type: 3,
-        required: true,
-        max_length: 1800
-      },
-      languageOption('target', 'Target language: Arabic, English, ar, en, ja, de, ...')
-    ]
+    options: [textOption, sourceOption(), targetOption('Target language; defaults to your incoming language'), providerOption, styleOption]
   },
   {
     ...common,
     name: 'say',
-    description: 'Translate what you type and send the translated text',
+    description: 'Translate privately, then copy/paste it so YOU send the message',
     type: 1,
-    options: [
-      {
-        name: 'text',
-        description: 'Write naturally in Arabic or any supported language',
-        type: 3,
-        required: true,
-        max_length: 1800
-      },
-      languageOption('target', 'Target language; defaults to your outgoing language')
-    ]
+    options: [textOption, sourceOption(), targetOption('Target language; defaults to your outgoing language'), providerOption, styleOption]
   },
   {
     ...common,
     name: 'voice',
-    description: 'Transcribe and translate an audio or voice file',
+    description: 'Transcribe audio and return a private translation you can copy',
     type: 1,
     options: [
       {
@@ -70,29 +93,39 @@ export const commands = [
         type: 11,
         required: true
       },
-      languageOption('target', 'Target language; defaults to your outgoing language'),
-      {
-        name: 'send',
-        description: 'Post the translated text publicly when Discord allows it',
-        type: 5,
-        required: false
-      }
+      targetOption('Target language; defaults to your outgoing language'),
+      providerOption,
+      styleOption
     ]
   },
   {
     ...common,
     name: 'settings',
-    description: 'Set default incoming and outgoing translation languages',
+    description: 'Set your default translation targets, provider and style',
     type: 1,
     options: [
-      languageOption('incoming', 'Right-click Translate target; default Arabic'),
-      languageOption('outgoing', '/say and /voice target; default English')
+      {
+        name: 'incoming',
+        description: 'Right-click Translate target',
+        type: 3,
+        required: false,
+        choices: targetLanguageChoices
+      },
+      {
+        name: 'outgoing',
+        description: '/say and /voice target',
+        type: 3,
+        required: false,
+        choices: targetLanguageChoices
+      },
+      providerOption,
+      styleOption
     ]
   },
   {
     ...common,
     name: 'status',
-    description: 'Check translator and voice configuration',
+    description: 'Check translator, AI and voice configuration',
     type: 1
   }
 ] as const;

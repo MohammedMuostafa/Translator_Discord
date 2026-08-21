@@ -1,4 +1,5 @@
 import { env } from '../config.js';
+import { providerLanguageCode } from '../languages.js';
 import type { TranslationResult } from './translator.js';
 
 function decodeHtml(value: string): string {
@@ -10,7 +11,7 @@ function decodeHtml(value: string): string {
     .replace(/&amp;/g, '&');
 }
 
-export async function translateGoogle(text: string, target: string): Promise<TranslationResult> {
+export async function translateGoogle(text: string, target: string, source = 'auto'): Promise<TranslationResult> {
   if (!env.GOOGLE_TRANSLATE_API_KEY) throw new Error('GOOGLE_TRANSLATE_API_KEY is missing.');
 
   const response = await fetch(
@@ -18,7 +19,12 @@ export async function translateGoogle(text: string, target: string): Promise<Tra
     {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ q: text, target, format: 'text' }),
+      body: JSON.stringify({
+        q: text,
+        target: providerLanguageCode(target),
+        ...(source !== 'auto' ? { source: providerLanguageCode(source) } : {}),
+        format: 'text'
+      }),
       signal: AbortSignal.timeout(20_000)
     }
   );
@@ -36,6 +42,6 @@ export async function translateGoogle(text: string, target: string): Promise<Tra
 
   return {
     text: decodeHtml(item.translatedText),
-    detectedSourceLanguage: item.detectedSourceLanguage
+    detectedSourceLanguage: item.detectedSourceLanguage ?? (source !== 'auto' ? source : undefined)
   };
 }
