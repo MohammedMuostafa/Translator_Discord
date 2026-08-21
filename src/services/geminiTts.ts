@@ -4,23 +4,27 @@ import { languageInstruction, normalizeLanguage } from '../languages.js';
 export type GeneratedSpeech = {
   filename: string;
   contentType: string;
-  data: Uint8Array;
+  data: Uint8Array<ArrayBufferLike>;
 };
 
-type AudioContent = {
+type StreamAudioDelta = {
   type?: string;
   data?: string;
-  uri?: string;
   mime_type?: string;
   sample_rate?: number;
   channels?: number;
 };
 
-type InteractionResponse = {
-  steps?: Array<{
-    type?: string;
-    content?: AudioContent[];
-  }>;
+type StreamEvent = {
+  event_type?: string;
+  delta?: StreamAudioDelta;
+};
+
+type CollectedAudio = {
+  data: Buffer;
+  mimeType: string;
+  sampleRate: number;
+  channels: number;
 };
 
 function geminiTtsKey(): string | undefined {
@@ -35,11 +39,11 @@ function pronunciationInstruction(language: string): string {
   const normalized = normalizeLanguage(language, true);
 
   if (normalized === 'ar-eg') {
-    return 'Read the text exactly in natural Egyptian Arabic with a clear conversational Egyptian accent. Do not translate, summarize, or paraphrase it.';
+    return 'Read the text exactly in natural Egyptian Arabic with a clear conversational Egyptian accent. Keep English product names readable and natural. Do not translate, summarize, or paraphrase it.';
   }
 
   if (normalized === 'ar-msa') {
-    return 'Read the text exactly in clear Modern Standard Arabic with natural neutral Arabic pronunciation. Do not translate, summarize, or paraphrase it.';
+    return 'Read the text exactly in clear Modern Standard Arabic with natural neutral Arabic pronunciation. Keep English product names readable and natural. Do not translate, summarize, or paraphrase it.';
   }
 
   if (normalized === 'fa') {
@@ -76,237 +80,223 @@ function pcm16ToWav(
   return new Uint8Array(Buffer.concat([header, Buffer.from(pcm)]));
 }
 
-function looksLikeWav(data: Uint8Array<ArrayBufferLike>): boolean {
-  if (data.byteLength < 12) return false;
+function splitForSpeech(text: string, maxChars: number): string[] {
+  const clean = text.trim();
+  if (clean.length <= maxChars) return [clean];
 
-  const buffer = Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+  const chunks: string[] = [];
+  let remaining = clean;
 
-  return (
-    buffer.subarray(0, 4).toString('ascii') === 'RIFF' &&
-    buffer.subarray(8, 12).toString('ascii') === 'WAVE'
-  );
-}
+  while (remaining.length > maxChars) {
+    const window = remaining.slice(0, maxChars + 1);
+    const candidates = [
+      window.lastIndexOf('\n\n'),
+      window.lastIndexOf('. '),
+      window.lastIndexOf('؟ '),
+      window.lastIndexOf('! '),
+      window.lastIndexOf('، '),
+      window.lastIndexOf('\n'),
+      window.lastIndexOf(' ')
+    ];
 
-function findAudio(response: InteractionResponse): AudioContent | undefined {
-  const steps = response.steps ?? [];
+    let splitAt = Math.max(...candidates);
+    if (splitAt < Math.floor(maxChars * 0.45)) splitAt = maxChars;
 
-  for (let i = steps.length - 1; i >= 0; i -= 1) {
-    const content = steps[i]?.content ?? [];
-
-    for (let j = content.length - 1; j >= 0; j -= 1) {
-      const item = content[j];
-
-      if (item?.type === 'audio' && (item.data || item.uri)) {
-        return item;
-      }
-    }
+    const part = remaining.slice(0, splitAt).trim();
+    if (part) chunks.push(part);
+    remaining = remaining.slice(splitAt).trim();
   }
 
-  return undefined;
+  if (remaining) chunks.push(remaining);
+  return chunks;
 }
 
-function audioFileInfo(mime: string): {
-  filename: string;
-  contentType: string;
-} {
-  switch (mime) {
-    case 'audio/mp3':
-    case 'audio/mpeg':
-      return {
-        filename: 'translation.mp3',
-        contentType: 'audio/mpeg'
-      };
+function parseSseLine(line: string): StreamEvent | undefined {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('data:')) return undefined;
 
-    case 'audio/wav':
-      return {
-        filename: 'translation.wav',
-        contentType: 'audio/wav'
-      };
+  const payload = trimmed.slice(5).trim();
+  if (!payload || payload === '[DONE]') return undefined;
 
-    case 'audio/ogg':
-    case 'audio/ogg_opus':
-    case 'audio/opus':
-      return {
-        filename: 'translation.ogg',
-        contentType: 'audio/ogg'
-      };
-
-    case 'audio/aac':
-      return {
-        filename: 'translation.aac',
-        contentType: 'audio/aac'
-      };
-
-    case 'audio/flac':
-      return {
-        filename: 'translation.flac',
-        contentType: 'audio/flac'
-      };
-
-    case 'audio/m4a':
-      return {
-        filename: 'translation.m4a',
-        contentType: 'audio/mp4'
-      };
-
-    default:
-      return {
-        filename: 'translation-audio.bin',
-        contentType: mime || 'application/octet-stream'
-      };
+  try {
+    return JSON.parse(payload) as StreamEvent;
+  } catch {
+    return undefined;
   }
 }
 
-export async function generateGeminiSpeech(
-  text: string,
-  language: string
-): Promise<GeneratedSpeech> {
+async function requestAudioStream(
+  input: string,
+  forceL16: boolean
+): Promise<CollectedAudio> {
   const apiKey = geminiTtsKey();
+  if (!apiKey) throw new Error('Gemini TTS API key is missing.');
 
-  if (!apiKey) {
-    throw new Error(
-      'Listening is not configured. Set GEMINI_TTS_API_KEY, or use the same Gemini key in AI_API_KEY.'
-    );
-  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), env.TTS_REQUEST_TIMEOUT_MS);
 
-  const cleanText = text.trim();
-
-  if (!cleanText) {
-    throw new Error('There is no translated text to read aloud.');
-  }
-
-  if (cleanText.length > env.TTS_MAX_CHARS) {
-    throw new Error(
-      `This translation is too long for Listen. Maximum: ${env.TTS_MAX_CHARS} characters.`
-    );
-  }
-
-  const response = await fetch(
-    'https://generativelanguage.googleapis.com/v1beta/interactions',
-    {
+  try {
+    const response = await fetch('https://generativelanguage.googleapis.com/v1beta/interactions', {
       method: 'POST',
       headers: {
         'x-goog-api-key': apiKey,
         'content-type': 'application/json',
-        // Explicitly use the current Interactions API schema.
+        'accept': 'text/event-stream',
         'Api-Revision': '2026-05-20'
       },
       body: JSON.stringify({
         model: env.GEMINI_TTS_MODEL,
-        input: `${pronunciationInstruction(language)}\n\nText to read:\n${cleanText}`,
-
-        // IMPORTANT:
-        // The current Gemini Interactions API does NOT accept mime_type
-        // for this TTS model. Ask for audio only and use the MIME type
-        // returned by Gemini.
-        response_format: {
-          type: 'audio'
-        },
-
-        generation_config: {
-          speech_config: [
-            {
-              voice: env.GEMINI_TTS_VOICE
+        input,
+        response_format: forceL16
+          ? {
+              type: 'audio',
+              mime_type: 'audio/l16',
+              sample_rate: 24000,
+              delivery: 'inline'
             }
-          ]
-        }
+          : { type: 'audio' },
+        generation_config: {
+          speech_config: [{ voice: env.GEMINI_TTS_VOICE }]
+        },
+        stream: true
       }),
-      signal: AbortSignal.timeout(45_000)
-    }
-  );
-
-  if (!response.ok) {
-    const body = await response.text();
-
-    throw new Error(
-      `Gemini TTS error ${response.status}: ${body.slice(0, 500)}`
-    );
-  }
-
-  const json = (await response.json()) as InteractionResponse;
-  const audio = findAudio(json);
-
-  if (!audio) {
-    throw new Error('Gemini TTS returned no audio.');
-  }
-
-  // Current implementation requests inline audio. If Google returns a URI,
-  // fetch it server-side so Discord still receives an attachment.
-  if (!audio.data && audio.uri) {
-    const audioResponse = await fetch(audio.uri, {
-      headers: {
-        'x-goog-api-key': apiKey
-      },
-      signal: AbortSignal.timeout(45_000)
+      signal: controller.signal
     });
 
-    if (!audioResponse.ok) {
-      throw new Error(
-        `Could not download generated audio (${audioResponse.status}).`
-      );
+    if (!response.ok) {
+      const body = await response.text();
+      const error = new Error(`Gemini TTS error ${response.status}: ${body.slice(0, 500)}`);
+      (error as Error & { status?: number }).status = response.status;
+      throw error;
     }
 
-    const mime =
-      audio.mime_type ??
-      audioResponse.headers.get('content-type') ??
-      'audio/wav';
+    if (!response.body) throw new Error('Gemini TTS returned an empty streaming response.');
 
-    let downloaded: Uint8Array<ArrayBufferLike> = new Uint8Array(
-      await audioResponse.arrayBuffer()
-    );
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
+    const chunks: Buffer[] = [];
+    let mimeType = forceL16 ? 'audio/l16' : 'audio/l16';
+    let sampleRate = 24_000;
+    let channels = 1;
 
-    if (mime === 'audio/l16') {
-      downloaded = pcm16ToWav(
-        downloaded,
-        audio.sample_rate ?? 24_000,
-        audio.channels ?? 1
-      );
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-      return {
-        filename: 'translation.wav',
-        contentType: 'audio/wav',
-        data: downloaded
-      };
+      pending += decoder.decode(value, { stream: true });
+      const lines = pending.split(/\r?\n/);
+      pending = lines.pop() ?? '';
+
+      for (const line of lines) {
+        const event = parseSseLine(line);
+        const delta = event?.delta;
+        if (event?.event_type !== 'step.delta' || delta?.type !== 'audio' || !delta.data) continue;
+
+        chunks.push(Buffer.from(delta.data, 'base64'));
+        mimeType = delta.mime_type ?? mimeType;
+        sampleRate = delta.sample_rate ?? sampleRate;
+        channels = delta.channels ?? channels;
+      }
     }
 
-    const file = audioFileInfo(mime);
+    if (pending.trim()) {
+      const event = parseSseLine(pending);
+      const delta = event?.delta;
+      if (event?.event_type === 'step.delta' && delta?.type === 'audio' && delta.data) {
+        chunks.push(Buffer.from(delta.data, 'base64'));
+        mimeType = delta.mime_type ?? mimeType;
+        sampleRate = delta.sample_rate ?? sampleRate;
+        channels = delta.channels ?? channels;
+      }
+    }
+
+    if (chunks.length === 0) throw new Error('Gemini TTS returned no audio chunks.');
 
     return {
-      ...file,
-      data: downloaded
+      data: Buffer.concat(chunks),
+      mimeType,
+      sampleRate,
+      channels
     };
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('Gemini TTS took too long. Try a shorter selection or try again in a moment.');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function generateChunk(text: string, language: string): Promise<CollectedAudio> {
+  const input = `${pronunciationInstruction(language)}\n\nText to read:\n${text}`;
+
+  try {
+    return await requestAudioStream(input, true);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    // Compatibility fallback for deployments/models that reject explicit audio format.
+    if (message.includes('400') && /mime_type|response_format|invalid_request/i.test(message)) {
+      return requestAudioStream(input, false);
+    }
+    throw error;
+  }
+}
+
+export async function generateGeminiSpeech(text: string, language: string): Promise<GeneratedSpeech> {
+  const apiKey = geminiTtsKey();
+  if (!apiKey) {
+    throw new Error('Listening is not configured. Set GEMINI_TTS_API_KEY, or use the same Gemini key in AI_API_KEY.');
   }
 
-  if (!audio.data) {
-    throw new Error('Gemini TTS returned an empty audio response.');
+  const cleanText = text.trim();
+  if (!cleanText) throw new Error('There is no text to read aloud.');
+  if (cleanText.length > env.TTS_MAX_CHARS) {
+    throw new Error(`This text is too long for Listen. Maximum: ${env.TTS_MAX_CHARS.toLocaleString()} characters.`);
   }
 
-  let data: Uint8Array<ArrayBufferLike> = new Uint8Array(
-    Buffer.from(audio.data, 'base64')
+  const parts = splitForSpeech(cleanText, env.TTS_CHUNK_CHARS);
+  const generated: CollectedAudio[] = [];
+
+  // Sequential generation avoids burst-rate limits and is more stable on Railway.
+  for (const part of parts) {
+    generated.push(await generateChunk(part, language));
+  }
+
+  const first = generated[0];
+  if (!first) throw new Error('Gemini TTS returned no audio.');
+
+  // The current Gemini TTS stream normally returns L16. Concatenate raw PCM
+  // chunks and wrap them once as a valid WAV file for Discord playback.
+  const allL16 = generated.every((item) => item.mimeType === 'audio/l16');
+  const sameFormat = generated.every(
+    (item) => item.sampleRate === first.sampleRate && item.channels === first.channels
   );
 
-  const mime = audio.mime_type ?? 'audio/l16';
-
-  // TTS may return raw PCM/L16. Convert it to a normal WAV file that
-  // Discord can play directly.
-  if (mime === 'audio/l16' || (mime === 'audio/wav' && !looksLikeWav(data))) {
-    data = pcm16ToWav(
-      data,
-      audio.sample_rate ?? 24_000,
-      audio.channels ?? 1
-    );
-
+  if (allL16 && sameFormat) {
+    const pcm = Buffer.concat(generated.map((item) => item.data));
     return {
-      filename: 'translation.wav',
+      filename: 'td-ai-listen.wav',
       contentType: 'audio/wav',
-      data
+      data: pcm16ToWav(pcm, first.sampleRate, first.channels)
     };
   }
 
-  const file = audioFileInfo(mime);
+  // Compressed audio cannot safely be byte-concatenated. For a single chunk,
+  // return it directly; multi-chunk responses should normally take the L16 path.
+  if (generated.length === 1) {
+    const mime = first.mimeType;
+    if (mime === 'audio/mp3' || mime === 'audio/mpeg') {
+      return { filename: 'td-ai-listen.mp3', contentType: 'audio/mpeg', data: first.data };
+    }
+    if (mime === 'audio/wav') {
+      return { filename: 'td-ai-listen.wav', contentType: 'audio/wav', data: first.data };
+    }
+    if (mime === 'audio/ogg' || mime === 'audio/ogg_opus' || mime === 'audio/opus') {
+      return { filename: 'td-ai-listen.ogg', contentType: 'audio/ogg', data: first.data };
+    }
+  }
 
-  return {
-    ...file,
-    data
-  };
+  throw new Error('Gemini returned incompatible audio chunks. Please try Listen again.');
 }

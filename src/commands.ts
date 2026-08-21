@@ -50,7 +50,7 @@ const textOption = {
   description: 'Type the text first — AI detects its language automatically',
   type: 3,
   required: true,
-  max_length: 1800
+  max_length: 4000
 };
 
 const chatLanguageOption = {
@@ -67,6 +67,20 @@ const chatLanguageOption = {
   ]
 };
 
+const aiLanguageOption = {
+  name: 'language',
+  description: 'Language for the AI result',
+  type: 3,
+  required: false,
+  choices: [
+    { name: 'My language (from /settings)', value: 'my' },
+    { name: 'Egyptian Arabic', value: 'ar-eg' },
+    { name: 'Modern Standard Arabic', value: 'ar-msa' },
+    { name: 'English', value: 'en' },
+    { name: 'Persian / Farsi', value: 'fa' }
+  ]
+};
+
 export const commands = [
   {
     ...common,
@@ -75,8 +89,13 @@ export const commands = [
   },
   {
     ...common,
+    name: 'TD AI',
+    type: 3
+  },
+  {
+    ...common,
     name: 'translate',
-    description: 'Type text, choose only the target; source is detected automatically',
+    description: 'Translate text; source language is detected automatically',
     type: 1,
     options: [
       textOption,
@@ -87,8 +106,38 @@ export const commands = [
   },
   {
     ...common,
+    name: 'ai',
+    description: 'Summarize, explain, simplify, rewrite, draft a reply, or ask TD AI',
+    type: 1,
+    options: [
+      {
+        name: 'action',
+        description: 'What TD AI should do',
+        type: 3,
+        required: true,
+        choices: [
+          { name: '📝 Summarize', value: 'summarize' },
+          { name: '🧠 Explain', value: 'explain' },
+          { name: '💡 Simplify', value: 'simplify' },
+          { name: '✍️ Rewrite', value: 'rewrite' },
+          { name: '💬 Draft Reply', value: 'reply' },
+          { name: '🤖 Ask AI', value: 'ask' }
+        ]
+      },
+      {
+        name: 'text',
+        description: 'Text or question for TD AI',
+        type: 3,
+        required: true,
+        max_length: 4000
+      },
+      aiLanguageOption
+    ]
+  },
+  {
+    ...common,
     name: 'say',
-    description: 'Auto-detect your text, translate it, then copy/paste so YOU send it',
+    description: 'Translate your text into a copy-ready message you can send yourself',
     type: 1,
     options: [
       textOption,
@@ -151,7 +200,7 @@ export const commands = [
     options: [
       {
         name: 'my_language',
-        description: 'Used by “My language” and as the default right-click target',
+        description: 'Used by “My language” and TD AI message tools',
         type: 3,
         required: false,
         choices: targetLanguageChoicesWithDefault('Keep current').filter((item) => item.value !== 'my')
@@ -169,8 +218,14 @@ export const commands = [
   },
   {
     ...common,
+    name: 'help',
+    description: 'Show TD AI features and quick usage guide',
+    type: 1
+  },
+  {
+    ...common,
     name: 'status',
-    description: 'Check translator, AI and voice configuration',
+    description: 'Check translator, AI chat, AI tools and voice configuration',
     type: 1
   }
 ] as const;

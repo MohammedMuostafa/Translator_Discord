@@ -7,6 +7,13 @@ export interface ChatTurn {
   content: string;
 }
 
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const BACKOFF_MS = [800, 1800, 3500];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function languageInstruction(language: ChatResponseLanguage): string {
   switch (language) {
     case 'ar-eg':
@@ -24,9 +31,12 @@ function languageInstruction(language: ChatResponseLanguage): string {
 
 function systemPrompt(language: ChatResponseLanguage): string {
   return [
-    'You are TD AI, a helpful AI assistant running inside Discord.',
-    'Be accurate, useful, natural, and concise by default, while giving more detail when the user asks for it.',
-    'Preserve code blocks, URLs, technical names, and useful formatting.',
+    'You are TD AI, a helpful production AI assistant running inside Discord.',
+    'Be accurate, useful, natural, and concise by default, while giving more detail when asked.',
+    'You can summarize, explain, simplify, rewrite, brainstorm, draft replies, help with code, and answer general questions.',
+    'Use readable Discord Markdown with short paragraphs and lists when useful.',
+    'Preserve code blocks, URLs, technical names, product names, and useful formatting.',
+    'For Arabic/Persian text, use natural RTL order. Keep English names and acronyms in their original LTR order and avoid redundant/double parentheses around them.',
     'Do not claim you performed actions outside the tools and context you actually have.',
     languageInstruction(language)
   ].join(' ');
@@ -38,7 +48,7 @@ function normalizeApiError(status: number, body: string): string {
     const parsed = JSON.parse(body) as { error?: { message?: string } };
     message = parsed.error?.message ?? body;
   } catch {
-    // Keep the raw provider response when it is not JSON.
+    // Keep raw provider response when it is not JSON.
   }
 
   if (status === 429) return 'The AI provider is rate-limited right now. Try again shortly.';
@@ -59,54 +69,65 @@ export async function askAiChat(
     throw new Error('AI chat is not configured. Set AI_API_URL, AI_API_KEY and AI_MODEL.');
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45_000);
+  const body = JSON.stringify({
+    model: env.AI_MODEL,
+    messages: [
+      { role: 'system', content: systemPrompt(responseLanguage) },
+      ...history,
+      { role: 'user', content: userMessage }
+    ],
+    temperature: 0.55
+  });
 
-  try {
-    const response = await fetch(env.AI_API_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${env.AI_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: env.AI_MODEL,
-        messages: [
-          { role: 'system', content: systemPrompt(responseLanguage) },
-          ...history,
-          { role: 'user', content: userMessage }
-        ],
-        temperature: 0.6
-      }),
-      signal: controller.signal
-    });
+  let lastError = 'AI chat failed.';
 
-    const raw = await response.text();
-    if (!response.ok) throw new Error(normalizeApiError(response.status, raw));
+  for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt += 1) {
+    try {
+      const response = await fetch(env.AI_API_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${env.AI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body,
+        signal: AbortSignal.timeout(env.AI_ACTION_TIMEOUT_MS)
+      });
 
-    const parsed = JSON.parse(raw) as {
-      choices?: Array<{
-        message?: {
-          content?: string | Array<{ type?: string; text?: string }>;
-        };
-      }>;
-    };
+      const raw = await response.text();
+      if (!response.ok) {
+        lastError = normalizeApiError(response.status, raw);
+        if (RETRYABLE_STATUS.has(response.status) && attempt < BACKOFF_MS.length) {
+          await sleep(BACKOFF_MS[attempt] ?? 3500);
+          continue;
+        }
+        throw new Error(lastError);
+      }
 
-    const content = parsed.choices?.[0]?.message?.content;
-    const text = typeof content === 'string'
-      ? content
-      : Array.isArray(content)
-        ? content.map((part) => part.text ?? '').join('')
-        : '';
+      const parsed = JSON.parse(raw) as {
+        choices?: Array<{
+          message?: {
+            content?: string | Array<{ type?: string; text?: string }>;
+          };
+        }>;
+      };
 
-    if (!text.trim()) throw new Error('The AI provider returned an empty response.');
-    return text.trim();
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('The AI request timed out. Try again.');
+      const content = parsed.choices?.[0]?.message?.content;
+      const text = typeof content === 'string'
+        ? content
+        : Array.isArray(content)
+          ? content.map((part) => part.text ?? '').join('')
+          : '';
+
+      if (!text.trim()) throw new Error('The AI provider returned an empty response.');
+      return text.trim();
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : lastError;
+      if (attempt < BACKOFF_MS.length) {
+        await sleep(BACKOFF_MS[attempt] ?? 3500);
+        continue;
+      }
     }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  throw new Error(lastError);
 }

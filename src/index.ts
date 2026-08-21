@@ -18,31 +18,52 @@ import {
   handleVoice
 } from './handlers.js';
 import { handleChatCommand } from './chatHandlers.js';
+import {
+  handleAiActionButton,
+  handleAiMessagePicker,
+  handleAiSlash,
+  handleAiTranslateTarget,
+  handleHelp
+} from './aiActionHandlers.js';
 import type { DiscordInteraction } from './types.js';
 import { registerGlobalCommands } from './registerCommands.js';
 import { aiConfigured } from './providers/translator.js';
 import { gatewayChatConfigured, startGatewayChat } from './services/gatewayChat.js';
+import { aiActionsConfigured } from './services/aiActions.js';
 
 const app = express();
 app.disable('x-powered-by');
 
 const statusPayload = () => ({
   ok: true,
-  service: 'discord-user-translator',
-  version: '3.5.0',
+  service: 'td-ai',
+  version: '3.6.0',
   interactionEndpoint: '/interactions',
   translationProvider: env.TRANSLATION_PROVIDER,
   aiConfigured: aiConfigured(),
+  aiActions: aiActionsConfigured(),
   interactiveDmChat: gatewayChatConfigured(),
   chatSessionTtlMinutes: env.CHAT_SESSION_TTL_MINUTES,
-  voiceConfigured: Boolean(env.STT_URL && env.STT_API_KEY),
+  voiceFileTranslation: Boolean(env.STT_URL && env.STT_API_KEY),
   listenTts: Boolean((env.GEMINI_TTS_API_KEY ?? env.AI_API_KEY) && env.GEMINI_TTS_MODEL),
   sourceDetection: 'automatic',
-  arabicDialectDetection: aiConfigured() ? 'egyptian-vs-msa' : 'generic'
+  arabicDialectDetection: aiConfigured() ? 'egyptian-vs-msa' : 'generic',
+  mixedRtlFormatting: true
 });
 
 app.get('/', (_req, res) => res.json(statusPayload()));
 app.get('/health', (_req, res) => res.json(statusPayload()));
+
+function ephemeralError(message: string) {
+  return {
+    type: InteractionResponseType.ChannelMessageWithSource,
+    data: {
+      content: `❌ ${message}`,
+      flags: MessageFlags.Ephemeral,
+      allowed_mentions: { parse: [] }
+    }
+  };
+}
 
 app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (req, res) => {
   const interaction = req.body as DiscordInteraction;
@@ -57,6 +78,18 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
     if (customId.startsWith('translate_target:')) {
       res.json({ type: InteractionResponseType.DeferredUpdateMessage });
       handleTranslateMessageSelection(interaction);
+      return;
+    }
+
+    if (customId.startsWith('ai_action:')) {
+      res.json({ type: InteractionResponseType.DeferredUpdateMessage });
+      handleAiActionButton(interaction);
+      return;
+    }
+
+    if (customId.startsWith('ai_translate_target:')) {
+      res.json({ type: InteractionResponseType.DeferredUpdateMessage });
+      handleAiTranslateTarget(interaction);
       return;
     }
 
@@ -79,20 +112,29 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
   const commandType = interaction.data.type;
   const name = interaction.data.name;
 
-  if (commandType === ApplicationCommandType.Message && name === 'Translate') {
+  if (commandType === ApplicationCommandType.Message) {
     try {
-      const payload = await handleTranslateMessagePicker(interaction);
-      return res.json({
-        type: InteractionResponseType.ChannelMessageWithSource,
-        data: { ...payload, flags: MessageFlags.Ephemeral }
-      });
+      if (name === 'Translate') {
+        const payload = await handleTranslateMessagePicker(interaction);
+        return res.json({
+          type: InteractionResponseType.ChannelMessageWithSource,
+          data: { ...payload, flags: MessageFlags.Ephemeral }
+        });
+      }
+
+      if (name === 'TD AI') {
+        const payload = await handleAiMessagePicker(interaction);
+        return res.json({
+          type: InteractionResponseType.ChannelMessageWithSource,
+          data: { ...payload, flags: MessageFlags.Ephemeral }
+        });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unexpected error.';
-      return res.json({
-        type: InteractionResponseType.ChannelMessageWithSource,
-        data: { content: `❌ ${message}`, flags: MessageFlags.Ephemeral }
-      });
+      return res.json(ephemeralError(message));
     }
+
+    return res.json(ephemeralError('Unknown message action.'));
   }
 
   if (commandType !== ApplicationCommandType.ChatInput) {
@@ -108,15 +150,20 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unexpected error.';
-      return res.json({
-        type: InteractionResponseType.ChannelMessageWithSource,
-        data: { content: `❌ ${message}`, flags: MessageFlags.Ephemeral }
-      });
+      return res.json(ephemeralError(message));
     }
   }
 
   if (name === 'status') {
     const payload = handleStatus();
+    return res.json({
+      type: InteractionResponseType.ChannelMessageWithSource,
+      data: { ...payload, flags: MessageFlags.Ephemeral }
+    });
+  }
+
+  if (name === 'help') {
+    const payload = handleHelp();
     return res.json({
       type: InteractionResponseType.ChannelMessageWithSource,
       data: { ...payload, flags: MessageFlags.Ephemeral }
@@ -129,6 +176,15 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
       data: { flags: MessageFlags.Ephemeral }
     });
     handleChatCommand(interaction);
+    return;
+  }
+
+  if (name === 'ai') {
+    res.json({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
+    });
+    handleAiSlash(interaction);
     return;
   }
 
@@ -159,14 +215,11 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
     return;
   }
 
-  return res.json({
-    type: InteractionResponseType.ChannelMessageWithSource,
-    data: { content: 'Unknown command.', flags: MessageFlags.Ephemeral }
-  });
+  return res.json(ephemeralError('Unknown command.'));
 });
 
 app.listen(env.PORT, env.HOST, () => {
-  console.log(`TD AI / Translator Discord v3.5 listening on ${env.HOST}:${env.PORT}`);
+  console.log(`TD AI / Translator Discord v3.6 listening on ${env.HOST}:${env.PORT}`);
   console.log('Interactions endpoint: /interactions');
 
   void startGatewayChat().catch((error) => {
