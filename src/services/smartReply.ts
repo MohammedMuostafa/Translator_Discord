@@ -1,8 +1,8 @@
 import { env } from '../config.js';
 import { languageInstruction, normalizeLanguage } from '../languages.js';
+import { callTextModel } from './modelRouter.js';
 
 export type SmartReplyMode = 'normal' | 'alternative' | 'shorter' | 'detailed';
-
 export type SmartReplyResult = {
   isQuestion: boolean;
   sourceLanguage: string;
@@ -12,88 +12,31 @@ export type SmartReplyResult = {
   answerArabic: string;
 };
 
-const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
-const BACKOFF_MS = [800, 1800, 3500];
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function cleanJsonCandidate(content: string): string {
-  return content
-    .trim()
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/, '')
-    .trim();
+  return content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
 }
 
 function modeInstruction(mode: SmartReplyMode): string {
   switch (mode) {
-    case 'alternative':
-      return 'Create a meaningfully different alternative reply from the previous one. Do not merely rephrase a few words.';
-    case 'shorter':
-      return 'Make the proposed reply short, direct, and natural while preserving the useful answer.';
-    case 'detailed':
-      return 'Make the proposed reply more helpful and detailed, but still natural for Discord and not unnecessarily long.';
-    default:
-      return 'Create the most natural, useful reply for the message.';
+    case 'alternative': return 'Create a meaningfully different alternative reply from the previous one. Do not merely rephrase a few words.';
+    case 'shorter': return 'Make the proposed reply short, direct, and natural while preserving the useful answer.';
+    case 'detailed': return 'Make the proposed reply more helpful and detailed, but still natural for Discord and not unnecessarily long.';
+    default: return 'Create the most natural, useful reply for the message.';
   }
-}
-
-function normalizeProviderError(status: number, body: string): string {
-  let message = body;
-  try {
-    const parsed = JSON.parse(body) as { error?: { message?: string } };
-    message = parsed.error?.message ?? body;
-  } catch {
-    // Keep provider response.
-  }
-
-  if (status === 429) return 'The AI provider is rate-limited right now. Try again shortly.';
-  if (status === 503) return 'The AI model is temporarily busy. Try again in a moment.';
-  return `AI provider error ${status}: ${message.slice(0, 450)}`;
-}
-
-function supportsTemperature(model: string): boolean {
-  return !/^gemini-3(?:\.|[-])/i.test(model);
 }
 
 function parseResult(content: string): SmartReplyResult {
-  const parsed = JSON.parse(cleanJsonCandidate(content)) as {
-    isQuestion?: unknown;
-    sourceLanguage?: unknown;
-    sourceLanguageCode?: unknown;
-    translatedMessage?: unknown;
-    answer?: unknown;
-    answerArabic?: unknown;
-  };
-
-  const sourceLanguage = typeof parsed.sourceLanguage === 'string'
-    ? parsed.sourceLanguage.trim()
-    : 'Detected language';
-  const sourceLanguageCode = typeof parsed.sourceLanguageCode === 'string'
-    ? parsed.sourceLanguageCode.trim()
-    : 'auto';
-  const translatedMessage = typeof parsed.translatedMessage === 'string'
-    ? parsed.translatedMessage.trim()
-    : '';
-  const answer = typeof parsed.answer === 'string' ? parsed.answer.trim() : '';
-  const answerArabic = typeof parsed.answerArabic === 'string'
-    ? parsed.answerArabic.trim()
-    : '';
-
-  if (!translatedMessage || !answer || !answerArabic) {
-    throw new Error('AI returned an incomplete smart reply.');
-  }
-
-  return {
+  const parsed = JSON.parse(cleanJsonCandidate(content)) as Partial<SmartReplyResult>;
+  const result: SmartReplyResult = {
     isQuestion: parsed.isQuestion === true,
-    sourceLanguage,
-    sourceLanguageCode,
-    translatedMessage,
-    answer,
-    answerArabic
+    sourceLanguage: typeof parsed.sourceLanguage === 'string' ? parsed.sourceLanguage.trim() : 'Detected language',
+    sourceLanguageCode: typeof parsed.sourceLanguageCode === 'string' ? parsed.sourceLanguageCode.trim() : 'auto',
+    translatedMessage: typeof parsed.translatedMessage === 'string' ? parsed.translatedMessage.trim() : '',
+    answer: typeof parsed.answer === 'string' ? parsed.answer.trim() : '',
+    answerArabic: typeof parsed.answerArabic === 'string' ? parsed.answerArabic.trim() : ''
   };
+  if (!result.translatedMessage || !result.answer || !result.answerArabic) throw new Error('AI returned an incomplete smart reply.');
+  return result;
 }
 
 export function smartReplyConfigured(): boolean {
@@ -106,10 +49,6 @@ export async function createSmartReply(
   mode: SmartReplyMode = 'normal',
   previousAnswer?: string
 ): Promise<SmartReplyResult> {
-  if (!env.AI_API_URL || !env.AI_API_KEY || !env.AI_MODEL) {
-    throw new Error('AI features are not configured. Set AI_API_URL, AI_API_KEY and AI_MODEL.');
-  }
-
   const clean = sourceMessage.trim();
   if (!clean) throw new Error('There is no message text to answer.');
   if (clean.length > env.AI_ACTION_MAX_CHARS) {
@@ -118,13 +57,11 @@ export async function createSmartReply(
 
   const normalizedLanguage = normalizeLanguage(outputLanguage, true);
   const arabicLanguage = languageInstruction(normalizedLanguage);
-  const previous = previousAnswer?.trim()
-    ? `\nPrevious proposed reply in the sender's language:\n${previousAnswer.trim()}`
-    : '';
+  const previous = previousAnswer?.trim() ? `\nPrevious proposed reply in the sender's language:\n${previousAnswer.trim()}` : '';
 
-  const request: Record<string, unknown> = {
-    model: env.AI_MODEL,
-    messages: [
+  const response = await callTextModel(
+    'smart_reply',
+    [
       {
         role: 'system',
         content: [
@@ -143,65 +80,28 @@ export async function createSmartReply(
           '{"isQuestion":true|false,"sourceLanguage":"English","sourceLanguageCode":"en","translatedMessage":"Arabic translation","answer":"reply in sender language","answerArabic":"Arabic meaning of reply"}.'
         ].join(' ')
       },
-      {
-        role: 'user',
-        content: `Source message:\n${clean}${previous}`
-      }
-    ]
-  };
-
-  if (supportsTemperature(env.AI_MODEL)) {
-    request.temperature = mode === 'alternative' ? 0.75 : 0.35;
-  }
-
-  const body = JSON.stringify(request);
-  let lastError = 'Smart reply failed.';
-
-  for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt += 1) {
-    try {
-      const response = await fetch(env.AI_API_URL, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${env.AI_API_KEY}`,
-          'content-type': 'application/json'
-        },
-        body,
-        signal: AbortSignal.timeout(env.AI_ACTION_TIMEOUT_MS)
-      });
-
-      const raw = await response.text();
-      if (!response.ok) {
-        lastError = normalizeProviderError(response.status, raw);
-        if (RETRYABLE_STATUS.has(response.status) && attempt < BACKOFF_MS.length) {
-          await sleep(BACKOFF_MS[attempt] ?? 3500);
-          continue;
-        }
-        throw new Error(lastError);
-      }
-
-      const data = JSON.parse(raw) as {
-        choices?: Array<{
-          message?: { content?: string | Array<{ text?: string }> };
-        }>;
-      };
-
-      const content = data.choices?.[0]?.message?.content;
-      const text = typeof content === 'string'
-        ? content
-        : Array.isArray(content)
-          ? content.map((part) => part.text ?? '').join('')
-          : '';
-
-      if (!text.trim()) throw new Error('AI provider returned an empty smart reply.');
-      return parseResult(text);
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : lastError;
-      if (attempt < BACKOFF_MS.length) {
-        await sleep(BACKOFF_MS[attempt] ?? 3500);
-        continue;
-      }
+      { role: 'user', content: `Source message:\n${clean}${previous}` }
+    ],
+    {
+      temperature: mode === 'alternative' ? 0.75 : 0.35,
+      timeoutMs: env.AI_ACTION_TIMEOUT_MS
     }
-  }
+  );
+  return parseResult(response.text);
+}
 
-  throw new Error(lastError);
+export async function translateEditedReplyToArabic(answer: string, outputLanguage: string): Promise<string> {
+  const target = languageInstruction(normalizeLanguage(outputLanguage, true));
+  const response = await callTextModel(
+    'smart_reply',
+    [
+      {
+        role: 'system',
+        content: `Translate the user's edited reply into ${target}. Preserve meaning, names, emojis, links and tone. Return only the translation, with no commentary.`
+      },
+      { role: 'user', content: answer.trim() }
+    ],
+    { temperature: 0.1, timeoutMs: env.AI_ACTION_TIMEOUT_MS }
+  );
+  return response.text;
 }

@@ -1,29 +1,17 @@
 import { env } from '../config.js';
 import { languageInstruction, normalizeLanguage } from '../languages.js';
+import { callTextModel } from './modelRouter.js';
 
 export type AiAction = 'summarize' | 'explain' | 'simplify' | 'rewrite' | 'reply' | 'ask';
 
-const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
-const BACKOFF_MS = [800, 1800, 3500];
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function actionInstruction(action: AiAction): string {
   switch (action) {
-    case 'summarize':
-      return 'Summarize the supplied content accurately. Keep important names, numbers, dates, requirements, links and decisions. Use a short overview followed by bullets when helpful.';
-    case 'explain':
-      return 'Explain what the supplied content means in a clear teaching style. Explain jargon, context and implications. Separate facts from your interpretation and do not invent missing context.';
-    case 'simplify':
-      return 'Rewrite the supplied content in much simpler language while preserving the important meaning, names, numbers and links.';
-    case 'rewrite':
-      return 'Rewrite the supplied content to be clearer, better structured and more natural. Preserve the original meaning and factual claims. Keep useful Discord Markdown.';
-    case 'reply':
-      return 'Draft a natural, useful reply to the supplied message. Do not claim the reply was sent. Return only the proposed reply unless a tiny note is necessary.';
-    default:
-      return 'Answer the user request helpfully and accurately using the supplied content as context.';
+    case 'summarize': return 'Summarize the supplied content accurately. Keep important names, numbers, dates, requirements, links and decisions. Use a short overview followed by bullets when helpful.';
+    case 'explain': return 'Explain what the supplied content means in a clear teaching style. Explain jargon, context and implications. Separate facts from your interpretation and do not invent missing context.';
+    case 'simplify': return 'Rewrite the supplied content in much simpler language while preserving the important meaning, names, numbers and links.';
+    case 'rewrite': return 'Rewrite the supplied content to be clearer, better structured and more natural. Preserve the original meaning and factual claims. Keep useful Discord Markdown.';
+    case 'reply': return 'Draft a natural, useful reply to the supplied message. Do not claim the reply was sent. Return only the proposed reply unless a tiny note is necessary.';
+    default: return 'Answer the user request helpfully and accurately using the supplied content as context.';
   }
 }
 
@@ -46,20 +34,6 @@ function systemPrompt(action: AiAction, language: string): string {
   ].join(' ');
 }
 
-function normalizeProviderError(status: number, body: string): string {
-  let message = body;
-  try {
-    const parsed = JSON.parse(body) as { error?: { message?: string } };
-    message = parsed.error?.message ?? body;
-  } catch {
-    // Keep raw response.
-  }
-
-  if (status === 429) return 'The AI provider is rate-limited right now. Try again shortly.';
-  if (status === 503) return 'The AI model is temporarily busy. Try again in a moment.';
-  return `AI provider error ${status}: ${message.slice(0, 450)}`;
-}
-
 export function aiActionsConfigured(): boolean {
   return Boolean(env.AI_API_URL && env.AI_API_KEY && env.AI_MODEL);
 }
@@ -70,10 +44,6 @@ export async function runAiAction(
   language: string,
   customQuestion?: string
 ): Promise<string> {
-  if (!env.AI_API_URL || !env.AI_API_KEY || !env.AI_MODEL) {
-    throw new Error('AI features are not configured. Set AI_API_URL, AI_API_KEY and AI_MODEL.');
-  }
-
   const clean = text.trim();
   if (!clean) throw new Error('There is no text to process.');
   if (clean.length > env.AI_ACTION_MAX_CHARS) {
@@ -84,64 +54,16 @@ export async function runAiAction(
     ? `Question / request:\n${customQuestion?.trim() || clean}`
     : `Content:\n${clean}`;
 
-  const body = JSON.stringify({
-    model: env.AI_MODEL,
-    temperature: action === 'reply' || action === 'rewrite' ? 0.55 : 0.25,
-    messages: [
+  const response = await callTextModel(
+    'ai_tools',
+    [
       { role: 'system', content: systemPrompt(action, language) },
       { role: 'user', content: userContent }
-    ]
-  });
-
-  let lastError = 'AI action failed.';
-
-  for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt += 1) {
-    try {
-      const response = await fetch(env.AI_API_URL, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${env.AI_API_KEY}`,
-          'content-type': 'application/json'
-        },
-        body,
-        signal: AbortSignal.timeout(env.AI_ACTION_TIMEOUT_MS)
-      });
-
-      const raw = await response.text();
-      if (!response.ok) {
-        lastError = normalizeProviderError(response.status, raw);
-        if (RETRYABLE_STATUS.has(response.status) && attempt < BACKOFF_MS.length) {
-          await sleep(BACKOFF_MS[attempt] ?? 3500);
-          continue;
-        }
-        throw new Error(lastError);
-      }
-
-      const data = JSON.parse(raw) as {
-        choices?: Array<{
-          message?: {
-            content?: string | Array<{ type?: string; text?: string }>;
-          };
-        }>;
-      };
-
-      const content = data.choices?.[0]?.message?.content;
-      const output = typeof content === 'string'
-        ? content
-        : Array.isArray(content)
-          ? content.map((part) => part.text ?? '').join('')
-          : '';
-
-      if (!output.trim()) throw new Error('The AI provider returned an empty response.');
-      return output.trim();
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : lastError;
-      if (attempt < BACKOFF_MS.length) {
-        await sleep(BACKOFF_MS[attempt] ?? 3500);
-        continue;
-      }
+    ],
+    {
+      temperature: action === 'reply' || action === 'rewrite' ? 0.55 : 0.25,
+      timeoutMs: env.AI_ACTION_TIMEOUT_MS
     }
-  }
-
-  throw new Error(lastError);
+  );
+  return response.text;
 }

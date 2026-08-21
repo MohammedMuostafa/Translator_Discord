@@ -1,7 +1,4 @@
-export type DiscordUser = {
-  id: string;
-  username?: string;
-};
+export type DiscordUser = { id: string; username?: string };
 
 export type DiscordAttachment = {
   id: string;
@@ -15,11 +12,7 @@ export type DiscordAttachment = {
   waveform?: string;
 };
 
-export type DiscordMessage = {
-  id: string;
-  content: string;
-  attachments?: DiscordAttachment[];
-};
+export type DiscordMessage = { id: string; content: string; attachments?: DiscordAttachment[] };
 
 export type DiscordInteractionOption = {
   name: string;
@@ -27,6 +20,13 @@ export type DiscordInteractionOption = {
   value?: string | boolean;
   options?: DiscordInteractionOption[];
   focused?: boolean;
+};
+
+export type DiscordComponent = {
+  type: number;
+  custom_id?: string;
+  value?: string;
+  components?: DiscordComponent[];
 };
 
 export type DiscordInteraction = {
@@ -48,6 +48,7 @@ export type DiscordInteraction = {
     component_type?: number;
     values?: string[];
     options?: DiscordInteractionOption[];
+    components?: DiscordComponent[];
     resolved?: {
       messages?: Record<string, DiscordMessage>;
       attachments?: Record<string, DiscordAttachment>;

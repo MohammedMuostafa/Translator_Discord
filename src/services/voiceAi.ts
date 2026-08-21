@@ -20,16 +20,14 @@ import { askAiChat, type ChatResponseLanguage, type ChatTurn } from './aiChat.js
 import { generateGeminiSpeech, geminiTtsConfigured } from './geminiTts.js';
 import { getGatewayClient, waitForGatewayReady } from './gatewayChat.js';
 import { sttConfigured, transcribeAudioBytes } from './stt.js';
+import { getGeminiTaskRoute, getVoiceRuntimeSettings, type ThinkingLevelName } from './runtimeConfig.js';
 
 const require = createRequire(import.meta.url);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const OpusScript: any = require('opusscript');
 
 type LiveSessionLike = {
-  sendRealtimeInput(params: {
-    audio?: { data: string; mimeType: string };
-    audioStreamEnd?: boolean;
-  }): void;
+  sendRealtimeInput(params: { audio?: { data: string; mimeType: string }; audioStreamEnd?: boolean }): void;
   close(): void;
 };
 
@@ -43,39 +41,27 @@ interface VoiceAiSession {
   mode: VoiceMode;
   connection: VoiceConnection;
   player: AudioPlayer;
-
-  // Live API state.
   live?: LiveSessionLike;
   outputStream?: PassThrough;
   inputTranscript: string;
   outputTranscript: string;
   turns: number;
-
-  // Cascade fallback state.
   history: ChatTurn[];
-
   busy: boolean;
   capturing: boolean;
   startedAt: number;
+  silenceMs: number;
 }
 
 const sessions = new Map<string, VoiceAiSession>();
 
-function liveApiKey(): string | undefined {
-  return env.GEMINI_LIVE_API_KEY ?? env.AI_API_KEY;
-}
-
-function liveThinkingLevel(): ThinkingLevel {
-  switch (env.GEMINI_LIVE_THINKING_LEVEL) {
-    case 'low':
-      return ThinkingLevel.LOW;
-    case 'medium':
-      return ThinkingLevel.MEDIUM;
-    case 'high':
-      return ThinkingLevel.HIGH;
+function thinkingLevel(value: ThinkingLevelName): ThinkingLevel {
+  switch (value) {
+    case 'low': return ThinkingLevel.LOW;
+    case 'medium': return ThinkingLevel.MEDIUM;
+    case 'high': return ThinkingLevel.HIGH;
     case 'minimal':
-    default:
-      return ThinkingLevel.MINIMAL;
+    default: return ThinkingLevel.MINIMAL;
   }
 }
 
@@ -87,54 +73,31 @@ async function notifyUser(userId: string, text: string): Promise<void> {
   const client = getGatewayClient();
   const user = await client.users.fetch(userId).catch(() => undefined);
   if (!user) return;
-  await user.send({
-    content: text.slice(0, 1900),
-    allowedMentions: { parse: [] }
-  }).catch(() => undefined);
+  await user.send({ content: text.slice(0, 1900), allowedMentions: { parse: [] } }).catch(() => undefined);
 }
 
 function languageSystemInstruction(language: ChatResponseLanguage): string {
   const base = [
     'You are TD AI speaking naturally with one user inside a Discord voice channel.',
-    'Reply conversationally and quickly. Prefer one to three short sentences unless the user asks for detail.',
+    'Be smart, practical, context-aware and conversational.',
+    'Reply quickly. Prefer one to three short sentences unless the user asks for detail.',
     'Do not announce internal processing steps.',
     'If the user interrupts you, stop and listen.',
     'Never claim you performed an external action unless you actually did.'
   ];
-
   switch (language) {
-    case 'ar-eg':
-      base.push('Always answer in natural Egyptian Arabic unless the user explicitly asks for another language.');
-      break;
-    case 'ar-msa':
-      base.push('Always answer in clear Modern Standard Arabic unless the user explicitly asks for another language.');
-      break;
-    case 'en':
-      base.push('Answer in English unless the user explicitly asks for another language.');
-      break;
-    case 'fa':
-      base.push('Answer in natural Persian (Farsi) unless the user explicitly asks for another language.');
-      break;
-    default:
-      base.push('Automatically follow the language the user is currently speaking. If they switch language, switch naturally.');
+    case 'ar-eg': base.push('Always answer in natural Egyptian Arabic unless the user explicitly asks for another language.'); break;
+    case 'ar-msa': base.push('Always answer in clear Modern Standard Arabic unless the user explicitly asks for another language.'); break;
+    case 'en': base.push('Answer in English unless the user explicitly asks for another language.'); break;
+    case 'fa': base.push('Answer in natural Persian (Farsi) unless the user explicitly asks for another language.'); break;
+    default: base.push('Automatically follow the language the user is currently speaking. If they switch language, switch naturally.');
   }
-
   return base.join(' ');
 }
 
-/**
- * Discord voice decoder gives signed 16-bit PCM at 48kHz stereo.
- * Gemini Live prefers 16kHz mono input.
- *
- * Discord Opus frames are normally 20ms (960 samples/channel), which divides
- * cleanly by 3 -> 320 mono samples at 16kHz. Sending each frame immediately
- * keeps input buffering around 20ms.
- */
 function discordPcm48StereoToGemini16Mono(pcm: Buffer): Buffer {
   const frames = Math.floor(pcm.byteLength / 4);
-  const outputFrames = Math.floor(frames / 3);
-  const out = Buffer.allocUnsafe(outputFrames * 2);
-
+  const out = Buffer.allocUnsafe(Math.floor(frames / 3) * 2);
   let outOffset = 0;
   for (let frame = 0; frame + 2 < frames; frame += 3) {
     const byteOffset = frame * 4;
@@ -144,60 +107,36 @@ function discordPcm48StereoToGemini16Mono(pcm: Buffer): Buffer {
     out.writeInt16LE(mono, outOffset);
     outOffset += 2;
   }
-
   return outOffset === out.byteLength ? out : out.subarray(0, outOffset);
 }
 
-/**
- * Gemini Live returns raw signed 16-bit PCM at 24kHz mono.
- * @discordjs/voice StreamType.Raw expects signed 16-bit 48kHz stereo.
- *
- * Nearest-neighbour 2x upsample is intentionally cheap: Live voice prioritizes
- * latency, and Discord/Opus will encode the resulting stream afterward.
- */
 function geminiPcm24MonoToDiscord48Stereo(pcm: Buffer): Buffer {
   const samples = Math.floor(pcm.byteLength / 2);
   const out = Buffer.allocUnsafe(samples * 8);
-
   let offset = 0;
   for (let i = 0; i < samples; i += 1) {
     const sample = pcm.readInt16LE(i * 2);
-
-    // 24k -> 48k: duplicate in time, and duplicate mono into L/R.
     out.writeInt16LE(sample, offset);
     out.writeInt16LE(sample, offset + 2);
     out.writeInt16LE(sample, offset + 4);
     out.writeInt16LE(sample, offset + 6);
     offset += 8;
   }
-
   return out;
 }
 
 function stopPlayback(session: VoiceAiSession): void {
   const stream = session.outputStream;
   session.outputStream = undefined;
-
-  if (stream) {
-    stream.removeAllListeners();
-    stream.destroy();
-  }
-
+  if (stream) { stream.removeAllListeners(); stream.destroy(); }
   session.player.stop(true);
 }
 
 function ensureLivePlayback(session: VoiceAiSession): PassThrough {
-  if (session.outputStream && !session.outputStream.destroyed) {
-    return session.outputStream;
-  }
-
+  if (session.outputStream && !session.outputStream.destroyed) return session.outputStream;
   const stream = new PassThrough();
-  const resource = createAudioResource(stream, {
-    inputType: StreamType.Raw
-  });
-
   session.outputStream = stream;
-  session.player.play(resource);
+  session.player.play(createAudioResource(stream, { inputType: StreamType.Raw }));
   return stream;
 }
 
@@ -210,30 +149,18 @@ function finishLivePlayback(session: VoiceAiSession): void {
 function handleLiveMessage(session: VoiceAiSession, message: LiveServerMessage): void {
   const content = message.serverContent;
   if (!content) return;
-
-  if (content.interrupted) {
-    // User started talking while TD AI was speaking.
-    stopPlayback(session);
-    session.busy = false;
-  }
-
+  if (content.interrupted) { stopPlayback(session); session.busy = false; }
   const inputText = content.inputTranscription?.text?.trim();
   if (inputText) session.inputTranscript = inputText;
-
   const outputText = content.outputTranscription?.text?.trim();
   if (outputText) session.outputTranscript = outputText;
 
-  const parts = content.modelTurn?.parts ?? [];
-  for (const part of parts) {
+  for (const part of content.modelTurn?.parts ?? []) {
     const data = part.inlineData?.data;
     if (!data) continue;
-
     session.busy = true;
-    const pcm24Mono = Buffer.from(data, 'base64');
-    if (pcm24Mono.byteLength === 0) continue;
-
-    const discordPcm = geminiPcm24MonoToDiscord48Stereo(pcm24Mono);
-    ensureLivePlayback(session).write(discordPcm);
+    const pcm24 = Buffer.from(data, 'base64');
+    if (pcm24.byteLength) ensureLivePlayback(session).write(geminiPcm24MonoToDiscord48Stereo(pcm24));
   }
 
   if (content.turnComplete) {
@@ -244,171 +171,92 @@ function handleLiveMessage(session: VoiceAiSession, message: LiveServerMessage):
 }
 
 async function connectGeminiLive(session: VoiceAiSession): Promise<void> {
-  const apiKey = liveApiKey();
-  if (!apiKey) {
-    throw new Error('Gemini Live requires GEMINI_LIVE_API_KEY or AI_API_KEY.');
-  }
-
-  const ai = new GoogleGenAI({ apiKey });
+  const route = await getGeminiTaskRoute('voice_live');
+  const voice = await getVoiceRuntimeSettings();
+  const ai = new GoogleGenAI({ apiKey: route.apiKey });
 
   const live = await ai.live.connect({
-    model: env.GEMINI_LIVE_MODEL,
+    model: route.model,
     callbacks: {
-      onopen: () => {
-        console.log(`Gemini Live connected for guild ${session.guildId}.`);
-      },
+      onopen: () => console.log(`Gemini Live connected for guild ${session.guildId} via ${route.providerName}/${route.model}.`),
       onmessage: (message) => {
-        try {
-          handleLiveMessage(session, message);
-        } catch (error) {
-          console.error('Gemini Live message handling error:', error);
-        }
+        try { handleLiveMessage(session, message); }
+        catch (error) { console.error('Gemini Live message handling error:', error); }
       },
       onerror: (event) => {
         console.error('Gemini Live socket error:', event.message);
-        void notifyUser(
-          session.userId,
-          `❌ **TD AI Live Voice:** ${event.message || 'Live API socket error.'}`
-        );
+        void notifyUser(session.userId, `❌ **TD AI Live Voice:** ${event.message || 'Live API socket error.'}`);
       },
-      onclose: (event) => {
-        console.log(`Gemini Live closed (${event.code}): ${event.reason}`);
-      }
+      onclose: (event) => console.log(`Gemini Live closed (${event.code}): ${event.reason}`)
     },
     config: {
       responseModalities: [Modality.AUDIO],
-      systemInstruction: {
-        parts: [{ text: languageSystemInstruction(session.language) }]
-      },
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: {
-            voiceName: env.GEMINI_LIVE_VOICE
-          }
-        }
-      },
-      thinkingConfig: {
-        thinkingLevel: liveThinkingLevel()
-      },
+      systemInstruction: { parts: [{ text: languageSystemInstruction(session.language) }] },
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice.liveVoice } } },
+      thinkingConfig: { thinkingLevel: thinkingLevel(voice.thinkingLevel) },
       inputAudioTranscription: {},
       outputAudioTranscription: {},
-      // Hybrid VAD:
-      // - Gemini keeps automatic speech-start detection enabled, avoiding
-      //   clipped first words.
-      // - Discord detects when the user stops speaking and immediately sends
-      //   audioStreamEnd, bypassing a second server-side silence wait.
       realtimeInputConfig: {
         automaticActivityDetection: {
           disabled: false,
           prefixPaddingMs: 20,
-          silenceDurationMs: Math.max(100, env.VOICE_AI_SILENCE_MS)
+          silenceDurationMs: Math.max(100, session.silenceMs)
         }
       }
     }
   });
-
   session.live = live;
 }
 
 function attachLiveReceiver(session: VoiceAiSession): void {
   const receiver = session.connection.receiver;
-
   receiver.speaking.on('start', (speakerId) => {
     const current = sessions.get(session.guildId);
-    if (!current || current !== session) return;
-    if (speakerId !== session.userId || session.capturing || !session.live) return;
-
-    // Barge-in: immediately stop local playback before streaming the new turn.
-    if (session.player.state.status !== AudioPlayerStatus.Idle) {
-      stopPlayback(session);
-    }
-
+    if (!current || current !== session || speakerId !== session.userId || session.capturing || !session.live) return;
+    if (session.player.state.status !== AudioPlayerStatus.Idle) stopPlayback(session);
     session.capturing = true;
     session.busy = false;
     session.inputTranscript = '';
     session.outputTranscript = '';
 
     const opusStream = receiver.subscribe(speakerId, {
-      end: {
-        behavior: EndBehaviorType.AfterSilence,
-        duration: env.VOICE_AI_SILENCE_MS
-      }
+      end: { behavior: EndBehaviorType.AfterSilence, duration: session.silenceMs }
     });
-
     const decoder = new OpusScript(48_000, 2, OpusScript.Application.AUDIO);
     let finalized = false;
-
-    const maxDurationTimer = setTimeout(() => {
-      opusStream.destroy();
-    }, env.VOICE_AI_MAX_UTTERANCE_SECONDS * 1000);
+    const timer = setTimeout(() => opusStream.destroy(), env.VOICE_AI_MAX_UTTERANCE_SECONDS * 1000);
 
     const finalize = () => {
       if (finalized) return;
       finalized = true;
-      clearTimeout(maxDurationTimer);
+      clearTimeout(timer);
       session.capturing = false;
-
       try { decoder.delete(); } catch { /* no-op */ }
-
-      try {
-        // Hybrid VAD fast-finalization signal supported by the Gemini
-        // Developer Live API. This tells Gemini the microphone turn ended
-        // immediately, without waiting for server-side silence detection.
-        session.live?.sendRealtimeInput({ audioStreamEnd: true });
-        session.busy = true;
-      } catch (error) {
-        console.error('Gemini Live audioStreamEnd error:', error);
-      }
+      try { session.live?.sendRealtimeInput({ audioStreamEnd: true }); session.busy = true; }
+      catch (error) { console.error('Gemini Live audioStreamEnd error:', error); }
     };
 
     opusStream.on('data', (packet: Buffer) => {
       try {
-        const decoded = Buffer.from(decoder.decode(packet));
-        const pcm16 = discordPcm48StereoToGemini16Mono(decoded);
-        if (pcm16.byteLength === 0) return;
-
-        session.live?.sendRealtimeInput({
-          audio: {
-            data: pcm16.toString('base64'),
-            mimeType: 'audio/pcm;rate=16000'
-          }
-        });
-      } catch (error) {
-        console.error('Live voice decode/send error:', error);
-      }
+        const pcm = discordPcm48StereoToGemini16Mono(Buffer.from(decoder.decode(packet)));
+        if (!pcm.byteLength) return;
+        session.live?.sendRealtimeInput({ audio: { data: pcm.toString('base64'), mimeType: 'audio/pcm;rate=16000' } });
+      } catch (error) { console.error('Live voice decode/send error:', error); }
     });
-
     opusStream.once('end', finalize);
     opusStream.once('close', finalize);
-    opusStream.once('error', (error) => {
-      console.error('Live voice receive stream error:', error.message);
-      finalize();
-    });
+    opusStream.once('error', (error) => { console.error('Live voice receive stream error:', error.message); finalize(); });
   });
 }
-
-// ---------- Cascade fallback (STT -> text model -> TTS) ----------
 
 function pcmToWav(pcm: Buffer, sampleRate = 48_000, channels = 2): Uint8Array<ArrayBufferLike> {
   const header = Buffer.alloc(44);
   const dataSize = pcm.byteLength;
   const blockAlign = channels * 2;
   const byteRate = sampleRate * blockAlign;
-
-  header.write('RIFF', 0);
-  header.writeUInt32LE(36 + dataSize, 4);
-  header.write('WAVE', 8);
-  header.write('fmt ', 12);
-  header.writeUInt32LE(16, 16);
-  header.writeUInt16LE(1, 20);
-  header.writeUInt16LE(channels, 22);
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(byteRate, 28);
-  header.writeUInt16LE(blockAlign, 32);
-  header.writeUInt16LE(16, 34);
-  header.write('data', 36);
-  header.writeUInt32LE(dataSize, 40);
-
+  header.write('RIFF', 0); header.writeUInt32LE(36 + dataSize, 4); header.write('WAVE', 8); header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(channels, 22); header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28); header.writeUInt16LE(blockAlign, 32); header.writeUInt16LE(16, 34); header.write('data', 36); header.writeUInt32LE(dataSize, 40);
   return new Uint8Array(Buffer.concat([header, pcm]));
 }
 
@@ -423,125 +271,58 @@ function inferSpeechLanguage(reply: string, preferred: ChatResponseLanguage): st
   return 'en';
 }
 
-async function playCascadeSpeech(session: VoiceAiSession, text: string): Promise<void> {
-  const language = inferSpeechLanguage(text, session.language);
-  const audio = await generateGeminiSpeech(text, language);
-
-  // TTS returns a complete audio file in cascade mode. Let ffmpeg probe it.
-  const stream = new PassThrough();
-  stream.end(Buffer.from(audio.data));
-  const resource = createAudioResource(stream, { inputType: StreamType.Arbitrary });
-
-  session.player.play(resource);
-  await entersState(session.player, AudioPlayerStatus.Playing, 15_000);
-  await entersState(session.player, AudioPlayerStatus.Idle, 180_000);
-}
-
-async function processCascadeUtterance(session: VoiceAiSession, pcmChunks: Buffer[]): Promise<void> {
-  if (pcmChunks.length === 0) return;
-  const pcm = Buffer.concat(pcmChunks);
+async function processCascadeUtterance(session: VoiceAiSession, chunks: Buffer[]): Promise<void> {
+  if (!chunks.length) return;
+  const pcm = Buffer.concat(chunks);
   if (pcm.byteLength < 24_000) return;
-
   session.busy = true;
   try {
-    const transcript = await transcribeAudioBytes(
-      pcmToWav(pcm),
-      'td-ai-voice.wav',
-      'audio/wav'
-    );
-
-    const reply = await askAiChat(
-      session.history,
-      transcript.text,
-      session.language,
-      env.VOICE_AI_MODEL ?? env.AI_MODEL
-    );
-
+    const transcript = await transcribeAudioBytes(pcmToWav(pcm), 'td-ai-voice.wav', 'audio/wav');
+    const reply = await askAiChat(session.history, transcript.text, session.language, env.VOICE_AI_MODEL ?? env.AI_MODEL);
     session.inputTranscript = transcript.text;
     session.outputTranscript = reply;
-    session.history = trimHistory([
-      ...session.history,
-      { role: 'user', content: transcript.text },
-      { role: 'assistant', content: reply }
-    ]);
-
-    await playCascadeSpeech(session, reply);
+    session.history = trimHistory([...session.history, { role: 'user', content: transcript.text }, { role: 'assistant', content: reply }]);
+    const audio = await generateGeminiSpeech(reply, inferSpeechLanguage(reply, session.language));
+    const stream = new PassThrough(); stream.end(Buffer.from(audio.data));
+    session.player.play(createAudioResource(stream, { inputType: StreamType.Arbitrary }));
+    await entersState(session.player, AudioPlayerStatus.Playing, 15_000);
+    await entersState(session.player, AudioPlayerStatus.Idle, 180_000);
     session.turns += 1;
   } catch (error) {
-    const message = errorMessage(error);
     console.error('Cascade Voice AI error:', error);
-    await notifyUser(session.userId, `❌ **TD AI Voice:** ${message}`);
-  } finally {
-    session.busy = false;
-  }
+    await notifyUser(session.userId, `❌ **TD AI Voice:** ${errorMessage(error)}`);
+  } finally { session.busy = false; }
 }
 
 function attachCascadeReceiver(session: VoiceAiSession): void {
   const receiver = session.connection.receiver;
-
   receiver.speaking.on('start', (speakerId) => {
     const current = sessions.get(session.guildId);
-    if (!current || current !== session) return;
-    if (speakerId !== session.userId || session.busy || session.capturing) return;
-
+    if (!current || current !== session || speakerId !== session.userId || session.busy || session.capturing) return;
     session.capturing = true;
-    const opusStream = receiver.subscribe(speakerId, {
-      end: {
-        behavior: EndBehaviorType.AfterSilence,
-        duration: env.VOICE_AI_SILENCE_MS
-      }
-    });
-
+    const opusStream = receiver.subscribe(speakerId, { end: { behavior: EndBehaviorType.AfterSilence, duration: session.silenceMs } });
     const decoder = new OpusScript(48_000, 2, OpusScript.Application.AUDIO);
     const chunks: Buffer[] = [];
     let finalized = false;
-
     const timer = setTimeout(() => opusStream.destroy(), env.VOICE_AI_MAX_UTTERANCE_SECONDS * 1000);
-
     const finalize = () => {
-      if (finalized) return;
-      finalized = true;
-      clearTimeout(timer);
-      session.capturing = false;
+      if (finalized) return; finalized = true; clearTimeout(timer); session.capturing = false;
       try { decoder.delete(); } catch { /* no-op */ }
       void processCascadeUtterance(session, chunks);
     };
-
     opusStream.on('data', (packet: Buffer) => {
-      try {
-        const decoded = decoder.decode(packet);
-        if (decoded?.byteLength) chunks.push(Buffer.from(decoded));
-      } catch (error) {
-        console.error('Cascade Opus decode error:', error);
-      }
+      try { const decoded = decoder.decode(packet); if (decoded?.byteLength) chunks.push(Buffer.from(decoded)); }
+      catch (error) { console.error('Cascade Opus decode error:', error); }
     });
-
-    opusStream.once('end', finalize);
-    opusStream.once('close', finalize);
-    opusStream.once('error', (error) => {
-      console.error('Cascade receive stream error:', error.message);
-      finalize();
-    });
+    opusStream.once('end', finalize); opusStream.once('close', finalize);
+    opusStream.once('error', (error) => { console.error('Cascade receive stream error:', error.message); finalize(); });
   });
 }
 
-function liveConfigured(): boolean {
-  return Boolean(env.DISCORD_BOT_TOKEN && liveApiKey() && env.GEMINI_LIVE_MODEL);
-}
-
-function cascadeConfigured(): boolean {
-  return Boolean(
-    env.DISCORD_BOT_TOKEN &&
-    env.AI_API_URL &&
-    env.AI_API_KEY &&
-    env.AI_MODEL &&
-    sttConfigured() &&
-    geminiTtsConfigured()
-  );
-}
-
 export function voiceAiConfigured(): boolean {
-  return env.VOICE_AI_MODE === 'live' ? liveConfigured() : cascadeConfigured();
+  if (!env.DISCORD_BOT_TOKEN) return false;
+  if (env.VOICE_AI_MODE === 'live') return Boolean(env.GEMINI_LIVE_API_KEY ?? env.AI_API_KEY);
+  return Boolean(env.AI_API_URL && env.AI_API_KEY && env.AI_MODEL && sttConfigured() && geminiTtsConfigured());
 }
 
 export async function joinVoiceAi(
@@ -549,91 +330,40 @@ export async function joinVoiceAi(
   userId: string,
   language: ChatResponseLanguage = 'auto'
 ): Promise<{ channelName: string; mode: VoiceMode }> {
-  if (!voiceAiConfigured()) {
-    throw new Error(
-      env.VOICE_AI_MODE === 'live'
-        ? 'Live Voice AI is not configured. Set DISCORD_BOT_TOKEN and GEMINI_LIVE_API_KEY (or AI_API_KEY).'
-        : 'Cascade Voice AI needs AI chat, STT, Gemini TTS and DISCORD_BOT_TOKEN.'
-    );
-  }
-
   await waitForGatewayReady();
   const client = getGatewayClient();
   const guild = await client.guilds.fetch(guildId);
-  const voiceState = guild.voiceStates.cache.get(userId);
-  const channel = voiceState?.channel as VoiceBasedChannel | null | undefined;
-
-  if (!channel) {
-    throw new Error('Join a Discord voice channel first, then run `/voicechat join`.');
-  }
+  const channel = guild.voiceStates.cache.get(userId)?.channel as VoiceBasedChannel | null | undefined;
+  if (!channel) throw new Error('Join a Discord voice channel first, then run `/voicechat join`.');
 
   const existing = sessions.get(guildId);
-  if (existing) {
-    stopPlayback(existing);
-    existing.live?.close();
-    existing.connection.destroy();
-    sessions.delete(guildId);
-  }
+  if (existing) { stopPlayback(existing); existing.live?.close(); existing.connection.destroy(); sessions.delete(guildId); }
 
-  const connection = joinVoiceChannel({
-    channelId: channel.id,
-    guildId,
-    adapterCreator: guild.voiceAdapterCreator,
-    selfDeaf: false,
-    selfMute: false,
-    daveEncryption: true
-  });
-
+  const connection = joinVoiceChannel({ channelId: channel.id, guildId, adapterCreator: guild.voiceAdapterCreator, selfDeaf: false, selfMute: false, daveEncryption: true });
   await entersState(connection, VoiceConnectionStatus.Ready, 25_000);
-
-  const player = createAudioPlayer({
-    behaviors: { noSubscriber: NoSubscriberBehavior.Pause }
-  });
+  const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Pause } });
   connection.subscribe(player);
   player.on('error', (error) => console.error('Voice player error:', error.message));
 
+  const runtimeVoice = await getVoiceRuntimeSettings();
   const session: VoiceAiSession = {
-    guildId,
-    channelId: channel.id,
-    userId,
-    language,
-    mode: env.VOICE_AI_MODE,
-    connection,
-    player,
-    inputTranscript: '',
-    outputTranscript: '',
-    turns: 0,
-    history: [],
-    busy: false,
-    capturing: false,
-    startedAt: Date.now()
+    guildId, channelId: channel.id, userId, language, mode: env.VOICE_AI_MODE, connection, player,
+    inputTranscript: '', outputTranscript: '', turns: 0, history: [], busy: false, capturing: false,
+    startedAt: Date.now(), silenceMs: runtimeVoice.silenceMs
   };
-
   sessions.set(guildId, session);
 
   try {
-    if (session.mode === 'live') {
-      await connectGeminiLive(session);
-      attachLiveReceiver(session);
-    } else {
-      attachCascadeReceiver(session);
-    }
+    if (session.mode === 'live') { await connectGeminiLive(session); attachLiveReceiver(session); }
+    else attachCascadeReceiver(session);
   } catch (error) {
-    sessions.delete(guildId);
-    stopPlayback(session);
-    session.live?.close();
-    session.connection.destroy();
-    throw error;
+    sessions.delete(guildId); stopPlayback(session); session.live?.close(); session.connection.destroy(); throw error;
   }
 
   connection.on('stateChange', (_oldState, newState) => {
     if (newState.status !== VoiceConnectionStatus.Destroyed) return;
     const current = sessions.get(guildId);
-    if (current === session) {
-      sessions.delete(guildId);
-      session.live?.close();
-      stopPlayback(session);
-    }
+    if (current === session) { sessions.delete(guildId); session.live?.close(); stopPlayback(session); }
   });
 
   return { channelName: channel.name, mode: session.mode };
@@ -642,35 +372,16 @@ export async function joinVoiceAi(
 export function leaveVoiceAi(guildId: string, requesterId?: string): boolean {
   const session = sessions.get(guildId);
   if (!session) return false;
-
-  if (requesterId && requesterId !== session.userId) {
-    throw new Error('Only the user who started this voice session can close it.');
-  }
-
-  sessions.delete(guildId);
-  stopPlayback(session);
-  session.live?.close();
-  session.history = [];
-  session.connection.destroy();
+  if (requesterId && requesterId !== session.userId) throw new Error('Only the user who started this voice session can close it.');
+  sessions.delete(guildId); stopPlayback(session); session.live?.close(); session.history = []; session.connection.destroy();
   return true;
 }
 
-export function voiceAiStatus(guildId: string): {
-  active: boolean;
-  userId?: string;
-  channelId?: string;
-  language?: ChatResponseLanguage;
-  busy?: boolean;
-  turns?: number;
-  mode?: VoiceMode;
-  inputTranscript?: string;
-  outputTranscript?: string;
-} {
+export function voiceAiStatus(guildId: string) {
   const session = sessions.get(guildId);
-  if (!session) return { active: false };
-
+  if (!session) return { active: false as const };
   return {
-    active: true,
+    active: true as const,
     userId: session.userId,
     channelId: session.channelId,
     language: session.language,
@@ -678,6 +389,7 @@ export function voiceAiStatus(guildId: string): {
     turns: session.turns * 2,
     mode: session.mode,
     inputTranscript: session.inputTranscript || undefined,
-    outputTranscript: session.outputTranscript || undefined
+    outputTranscript: session.outputTranscript || undefined,
+    silenceMs: session.silenceMs
   };
 }
