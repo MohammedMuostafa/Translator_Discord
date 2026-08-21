@@ -11,6 +11,7 @@ WORKDIR /app
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=8080
+RUN apk add --no-cache ffmpeg
 COPY package*.json ./
 RUN npm install --omit=dev
 COPY --from=build /app/dist ./dist

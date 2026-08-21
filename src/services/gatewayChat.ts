@@ -20,9 +20,17 @@ const sessions = new Map<string, ChatSession>();
 let gatewayStarted = false;
 
 const client = new Client({
-  intents: [GatewayIntentBits.DirectMessages],
+  intents: [
+    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildVoiceStates
+  ],
   partials: [Partials.Channel]
 });
+
+export function getGatewayClient(): Client {
+  return client;
+}
 
 function sessionTtlMs(): number {
   return env.CHAT_SESSION_TTL_MINUTES * 60_000;
@@ -151,14 +159,14 @@ export async function startGatewayChat(): Promise<void> {
   gatewayStarted = true;
 
   if (!env.DISCORD_BOT_TOKEN) {
-    console.log('Interactive DM chat disabled: DISCORD_BOT_TOKEN is missing.');
+    console.log('Interactive DM/voice gateway disabled: DISCORD_BOT_TOKEN is missing.');
     return;
   }
 
   await client.login(env.DISCORD_BOT_TOKEN);
 }
 
-async function waitForGatewayReady(timeoutMs = 12_000): Promise<void> {
+export async function waitForGatewayReady(timeoutMs = 15_000): Promise<void> {
   if (client.isReady()) return;
 
   await new Promise<void>((resolve, reject) => {

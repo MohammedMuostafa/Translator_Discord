@@ -7,6 +7,12 @@ import { runAiAction, type AiAction } from './services/aiActions.js';
 import { translateText } from './providers/translator.js';
 import { createSpeechSession } from './services/speechSessions.js';
 import { geminiTtsConfigured } from './services/geminiTts.js';
+import { createSmartReply, type SmartReplyMode, type SmartReplyResult } from './services/smartReply.js';
+import {
+  createSmartReplySession,
+  getSmartReplySession,
+  updateSmartReplySession
+} from './services/smartReplySessions.js';
 
 const RLM = '\u200f';
 const LRI = '\u2066';
@@ -28,6 +34,10 @@ function targetMessage(interaction: DiscordInteraction): DiscordMessage | undefi
   return interaction.data?.resolved?.messages?.[id];
 }
 
+function safeCodeBlock(text: string): string {
+  return text.replaceAll('```', 'ˋˋˋ');
+}
+
 function isRtl(code: string): boolean {
   const normalized = normalizeLanguage(code, true);
   return normalized === 'ar-eg' || normalized === 'ar-msa' || normalized === 'fa' || normalized === 'he';
@@ -39,6 +49,7 @@ function stabilizeRtl(text: string, language: string): string {
   let inFence = false;
   return text
     .replace(/\(\s*\(([^()\n]*[A-Za-z][^()\n]*)\)\s*\)/g, '($1)')
+    .replace(/\[\s*\[([^\[\]\n]*[A-Za-z][^\[\]\n]*)\]\s*\]/g, '[$1]')
     .split('\n')
     .map((line) => {
       if (/^\s*```/.test(line)) {
@@ -52,12 +63,11 @@ function stabilizeRtl(text: string, language: string): string {
       let body = line.slice(prefix.length);
 
       body = body
-        // Parentheses/brackets containing LTR content are isolated as a whole.
         .replace(/\(([^()\n]*[A-Za-z][^()\n]*)\)/g, `${LRI}($1)${PDI}`)
         .replace(/\[([^\[\]\n]*[A-Za-z][^\[\]\n]*)\]/g, `${LRI}[$1]${PDI}`)
-        // URLs and remaining Latin runs.
         .replace(/https?:\/\/[^\s]+/g, `${LRI}$&${PDI}`)
-        .replace(/(?:[A-Za-z0-9][A-Za-z0-9._:/@#%+&?=,'\-]*)(?:[ \t]+(?:[A-Za-z0-9][A-Za-z0-9._:/@#%+&?=,'\-]*))*/g, `${LRI}$&${PDI}`);
+        .replace(/(?:[A-Za-z0-9][A-Za-z0-9._:/@#%+&?=,'\-]*)(?:[ \t]+(?:[A-Za-z0-9][A-Za-z0-9._:/@#%+&?=,'\-]*))*/g, `${LRI}$&${PDI}`)
+        .replace(/\s+([،؛؟])/g, '$1');
 
       return `${prefix}${RLM}${body}`;
     })
@@ -89,6 +99,44 @@ function actionLabel(action: AiAction): string {
   }
 }
 
+function arabicReplyLanguage(preferred: string): string {
+  const normalized = normalizeLanguage(preferred, true);
+  return normalized === 'ar-msa' ? 'ar-msa' : 'ar-eg';
+}
+
+function smartReplyContent(result: SmartReplyResult, language: string): string {
+  const messageLabel = result.isQuestion ? 'السؤال بالعربي' : 'الرسالة بالعربي';
+  return [
+    `## ${result.isQuestion ? '❓' : '💬'} Smart Answer`,
+    '',
+    `**${messageLabel}**`,
+    stabilizeRtl(result.translatedMessage, language),
+    '',
+    '**الرد المقترح**',
+    stabilizeRtl(result.answer, language)
+  ].join('\n');
+}
+
+function smartReplyComponents(
+  userId: string,
+  sessionId: string,
+  result: SmartReplyResult,
+  language: string
+): Array<Record<string, unknown>> {
+  return [
+    {
+      type: 1,
+      components: [
+        { type: 2, style: 1, label: '🔄 Change Answer', custom_id: `smart_reply:regen:${sessionId}` },
+        { type: 2, style: 2, label: '✂️ Shorter', custom_id: `smart_reply:shorter:${sessionId}` },
+        { type: 2, style: 2, label: '🧠 More Detail', custom_id: `smart_reply:detailed:${sessionId}` },
+        { type: 2, style: 3, label: '✅ Use This Reply', custom_id: `smart_reply:use:${sessionId}` }
+      ]
+    },
+    ...listenComponents(userId, result.answer, language)
+  ];
+}
+
 async function runAndEdit(interaction: DiscordInteraction, fn: () => Promise<Record<string, unknown>>): Promise<void> {
   try {
     await editOriginalResponse(interaction.application_id, interaction.token, await fn());
@@ -116,20 +164,21 @@ export async function handleAiMessagePicker(interaction: DiscordInteraction): Pr
       '## 🤖 TD AI',
       `Output language: **${languageLabel(prefs.incoming)}**`,
       '',
-      'What do you want to do with this message?'
+      'Choose what you want to do with this message:'
     ].join('\n'),
     components: [
       {
         type: 1,
         components: [
           { type: 2, style: 1, label: '🌐 Translate', custom_id: `ai_action:translate:${sessionId}` },
-          { type: 2, style: 2, label: '📝 Summarize', custom_id: `ai_action:summarize:${sessionId}` },
-          { type: 2, style: 2, label: '🧠 Explain', custom_id: `ai_action:explain:${sessionId}` }
+          { type: 2, style: 3, label: '❓ Answer', custom_id: `ai_action:answer:${sessionId}` },
+          { type: 2, style: 2, label: '📝 Summarize', custom_id: `ai_action:summarize:${sessionId}` }
         ]
       },
       {
         type: 1,
         components: [
+          { type: 2, style: 2, label: '🧠 Explain', custom_id: `ai_action:explain:${sessionId}` },
           { type: 2, style: 2, label: '💡 Simplify', custom_id: `ai_action:simplify:${sessionId}` },
           { type: 2, style: 2, label: '✍️ Rewrite', custom_id: `ai_action:rewrite:${sessionId}` },
           { type: 2, style: 2, label: '💬 Draft Reply', custom_id: `ai_action:reply:${sessionId}` }
@@ -150,8 +199,9 @@ export function handleAiActionButton(interaction: DiscordInteraction): void {
     const userId = userIdOf(interaction);
     if (session.userId !== userId) throw new Error('This TD AI menu belongs to another user.');
 
+    const prefs = await getPreference(userId);
+
     if (actionRaw === 'translate') {
-      const prefs = await getPreference(userId);
       return {
         content: '🌐 **Choose the translation language:**',
         components: [{
@@ -169,18 +219,80 @@ export function handleAiActionButton(interaction: DiscordInteraction): void {
       };
     }
 
+    if (actionRaw === 'answer') {
+      const language = arabicReplyLanguage(prefs.incoming);
+      const result = await createSmartReply(session.message.content, language);
+      const smartSessionId = createSmartReplySession(userId, session.message.content, language, result);
+
+      return {
+        content: clipDiscord(smartReplyContent(result, language), 1900),
+        components: smartReplyComponents(userId, smartSessionId, result, language),
+        allowed_mentions: { parse: [] }
+      };
+    }
+
     const action = actionRaw as AiAction;
     if (!['summarize', 'explain', 'simplify', 'rewrite', 'reply'].includes(action)) {
       throw new Error('Unknown TD AI action.');
     }
 
-    const prefs = await getPreference(userId);
     const output = await runAiAction(action, session.message.content, prefs.incoming);
     const formatted = stabilizeRtl(output, prefs.incoming);
 
     return {
       content: clipDiscord(`## ${actionLabel(action)}\n\n${formatted}`, 1900),
       components: listenComponents(userId, output, prefs.incoming),
+      allowed_mentions: { parse: [] }
+    };
+  });
+}
+
+export function handleSmartReplyButton(interaction: DiscordInteraction): void {
+  void runAndEdit(interaction, async () => {
+    const customId = interaction.data?.custom_id ?? '';
+    const [, action, sessionId] = customId.split(':');
+    const session = sessionId ? getSmartReplySession(sessionId) : undefined;
+    if (!sessionId || !session) throw new Error('This answer expired. Open TD AI on the message again.');
+
+    const userId = userIdOf(interaction);
+    if (session.userId !== userId) throw new Error('This answer belongs to another user.');
+
+    if (action === 'use') {
+      return {
+        content: [
+          '## ✅ Ready to send',
+          '',
+          'Discord does not allow an app to send a normal message as your personal account.',
+          'Use the copy button on this code block, paste it into the chat, then press Enter:',
+          '',
+          '```text',
+          safeCodeBlock(session.result.answer),
+          '```'
+        ].join('\n'),
+        components: listenComponents(userId, session.result.answer, session.language),
+        allowed_mentions: { parse: [] }
+      };
+    }
+
+    const modeMap: Record<string, SmartReplyMode> = {
+      regen: 'alternative',
+      shorter: 'shorter',
+      detailed: 'detailed'
+    };
+    const mode = modeMap[action ?? ''];
+    if (!mode) throw new Error('Unknown answer action.');
+
+    const result = await createSmartReply(
+      session.sourceMessage,
+      session.language,
+      mode,
+      session.result.answer
+    );
+    updateSmartReplySession(sessionId, result);
+
+    return {
+      content: clipDiscord(smartReplyContent(result, session.language), 1900),
+      components: smartReplyComponents(userId, sessionId, result, session.language),
       allowed_mentions: { parse: [] }
     };
   });
@@ -247,13 +359,15 @@ export function handleHelp(): Record<string, unknown> {
       '## ✨ TD AI — Quick Help',
       '',
       '**Right-click any message → Apps → TD AI**',
-      '🌐 Translate • 📝 Summarize • 🧠 Explain • 💡 Simplify • ✍️ Rewrite • 💬 Draft Reply',
+      '🌐 Translate • ❓ Smart Answer • 📝 Summarize • 🧠 Explain • 💡 Simplify • ✍️ Rewrite • 💬 Draft Reply',
       '',
       '**Commands**',
       '`/translate` — translate text with automatic source detection',
       '`/ai` — summarize, explain, simplify, rewrite, draft a reply, or ask AI',
       '`/chat open` — start an interactive private AI chat in DMs',
-      '`/voice` — transcribe and translate an audio file',
+      '`/voicechat join` — join your voice channel and talk with TD AI',
+      '`/voicechat leave` — disconnect TD AI from voice',
+      '`/voice` — transcribe and translate an uploaded audio file',
       '`/say` — create a copy-ready translation',
       '`/settings` — choose your language and translation defaults',
       '`/status` — check configured services',

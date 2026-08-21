@@ -1,5 +1,6 @@
 import { targetLanguageChoicesWithDefault } from './languages.js';
 
+const GUILD_INSTALL = 0;
 const USER_INSTALL = 1;
 const GUILD = 0;
 const BOT_DM = 1;
@@ -8,6 +9,11 @@ const PRIVATE_CHANNEL = 2;
 const common = {
   integration_types: [USER_INSTALL],
   contexts: [GUILD, BOT_DM, PRIVATE_CHANNEL]
+};
+
+const guildOnly = {
+  integration_types: [GUILD_INSTALL],
+  contexts: [GUILD]
 };
 
 const targetOption = (description: string, required = true) => ({
@@ -161,6 +167,30 @@ export const commands = [
       targetOption('Language you want the transcript translated to'),
       styleOption,
       providerOption
+    ]
+  },
+  {
+    ...guildOnly,
+    name: 'voicechat',
+    description: 'Talk with TD AI inside a Discord voice channel',
+    type: 1,
+    options: [
+      {
+        name: 'join',
+        description: 'Join the voice channel you are currently in',
+        type: 1,
+        options: [chatLanguageOption]
+      },
+      {
+        name: 'leave',
+        description: 'Disconnect TD AI and clear temporary voice conversation memory',
+        type: 1
+      },
+      {
+        name: 'status',
+        description: 'Show the current TD AI voice-chat status for this server',
+        type: 1
+      }
     ]
   },
   {

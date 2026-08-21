@@ -11,27 +11,23 @@ function looksLikeAudio(attachment: DiscordAttachment): boolean {
   return /\.(ogg|oga|opus|mp3|m4a|wav|webm|aac|flac)$/i.test(attachment.filename);
 }
 
-export async function transcribeDiscordAttachment(
-  attachment: DiscordAttachment
+async function callStt(
+  bytes: ArrayBuffer | Uint8Array<ArrayBufferLike>,
+  filename: string,
+  contentType: string
 ): Promise<TranscriptionResult> {
-  if (!looksLikeAudio(attachment)) throw new Error('The selected attachment is not an audio file.');
-  if ((attachment.size ?? 0) > env.MAX_AUDIO_BYTES) {
+  const size = bytes instanceof ArrayBuffer ? bytes.byteLength : bytes.byteLength;
+  if (size > env.MAX_AUDIO_BYTES) {
     throw new Error(`Audio is too large. Maximum is ${Math.floor(env.MAX_AUDIO_BYTES / 1024 / 1024)} MB.`);
   }
 
-  const audioResponse = await fetch(attachment.url, { signal: AbortSignal.timeout(20_000) });
-  if (!audioResponse.ok) throw new Error('Could not download the Discord audio attachment.');
-
-  const bytes = await audioResponse.arrayBuffer();
-  if (bytes.byteLength > env.MAX_AUDIO_BYTES) throw new Error('Audio exceeds the configured size limit.');
+  if (!env.STT_URL || !env.STT_API_KEY) {
+    throw new Error('Speech-to-text is not configured yet. Add the STT service first.');
+  }
 
   const form = new FormData();
-  const type = attachment.content_type ?? 'application/octet-stream';
-  form.set('file', new Blob([bytes], { type }), attachment.filename);
-
-  if (!env.STT_URL || !env.STT_API_KEY) {
-    throw new Error('Voice translation is not configured yet. Add the STT service first.');
-  }
+  const data = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : Uint8Array.from(bytes);
+  form.set('file', new Blob([data], { type: contentType }), filename);
 
   const response = await fetch(`${env.STT_URL.replace(/\/$/, '')}/transcribe`, {
     method: 'POST',
@@ -45,7 +41,31 @@ export async function transcribeDiscordAttachment(
     throw new Error(`Speech-to-text error ${response.status}: ${errorBody.slice(0, 250)}`);
   }
 
-  const data = (await response.json()) as TranscriptionResult;
-  if (!data.text?.trim()) throw new Error('No speech was detected in the audio.');
-  return { text: data.text.trim(), language: data.language };
+  const result = (await response.json()) as TranscriptionResult;
+  if (!result.text?.trim()) throw new Error('No speech was detected in the audio.');
+  return { text: result.text.trim(), language: result.language };
+}
+
+export async function transcribeAudioBytes(
+  bytes: Uint8Array<ArrayBufferLike>,
+  filename = 'voice.wav',
+  contentType = 'audio/wav'
+): Promise<TranscriptionResult> {
+  return callStt(bytes, filename, contentType);
+}
+
+export async function transcribeDiscordAttachment(
+  attachment: DiscordAttachment
+): Promise<TranscriptionResult> {
+  if (!looksLikeAudio(attachment)) throw new Error('The selected attachment is not an audio file.');
+  if ((attachment.size ?? 0) > env.MAX_AUDIO_BYTES) {
+    throw new Error(`Audio is too large. Maximum is ${Math.floor(env.MAX_AUDIO_BYTES / 1024 / 1024)} MB.`);
+  }
+
+  const audioResponse = await fetch(attachment.url, { signal: AbortSignal.timeout(20_000) });
+  if (!audioResponse.ok) throw new Error('Could not download the Discord audio attachment.');
+
+  const bytes = await audioResponse.arrayBuffer();
+  const type = attachment.content_type ?? 'application/octet-stream';
+  return callStt(bytes, attachment.filename, type);
 }

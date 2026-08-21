@@ -16,6 +16,7 @@ const schema = z.object({
   DISCORD_PUBLIC_KEY: z.string().min(1),
   DISCORD_BOT_TOKEN: optionalString,
   REGISTER_COMMANDS_ON_START: z.enum(['true', 'false']).default('true').transform((value) => value === 'true'),
+  ENABLE_GUILD_VOICE_AI: z.enum(['true', 'false']).default('false').transform((value) => value === 'true'),
 
   HOST: z.string().default('0.0.0.0'),
   PORT: z.coerce.number().int().positive().default(8080),
@@ -46,8 +47,12 @@ const schema = z.object({
   GEMINI_TTS_MODEL: z.string().min(1).default('gemini-3.1-flash-tts-preview'),
   GEMINI_TTS_VOICE: z.string().min(1).default('Kore'),
   TTS_MAX_CHARS: z.coerce.number().int().min(100).max(10000).default(4000),
-  TTS_CHUNK_CHARS: z.coerce.number().int().min(250).max(2000).default(900),
   TTS_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(30_000).max(300_000).default(120_000),
+
+  // Live voice AI. Audio is processed in memory and only the session owner is subscribed.
+  VOICE_AI_SILENCE_MS: z.coerce.number().int().min(500).max(5000).default(1100),
+  VOICE_AI_MAX_UTTERANCE_SECONDS: z.coerce.number().int().min(5).max(120).default(35),
+  VOICE_AI_MAX_HISTORY: z.coerce.number().int().min(2).max(40).default(12),
 
   STT_URL: optionalUrl,
   STT_API_KEY: optionalString,

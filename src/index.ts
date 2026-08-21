@@ -23,13 +23,17 @@ import {
   handleAiMessagePicker,
   handleAiSlash,
   handleAiTranslateTarget,
-  handleHelp
+  handleHelp,
+  handleSmartReplyButton
 } from './aiActionHandlers.js';
+import { handleVoiceChatCommand } from './voiceHandlers.js';
 import type { DiscordInteraction } from './types.js';
 import { registerGlobalCommands } from './registerCommands.js';
 import { aiConfigured } from './providers/translator.js';
 import { gatewayChatConfigured, startGatewayChat } from './services/gatewayChat.js';
 import { aiActionsConfigured } from './services/aiActions.js';
+import { smartReplyConfigured } from './services/smartReply.js';
+import { voiceAiConfigured } from './services/voiceAi.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -37,14 +41,17 @@ app.disable('x-powered-by');
 const statusPayload = () => ({
   ok: true,
   service: 'td-ai',
-  version: '3.6.0',
+  version: '3.7.0',
   interactionEndpoint: '/interactions',
   translationProvider: env.TRANSLATION_PROVIDER,
   aiConfigured: aiConfigured(),
   aiActions: aiActionsConfigured(),
+  smartReply: smartReplyConfigured(),
   interactiveDmChat: gatewayChatConfigured(),
   chatSessionTtlMinutes: env.CHAT_SESSION_TTL_MINUTES,
   voiceFileTranslation: Boolean(env.STT_URL && env.STT_API_KEY),
+  liveVoiceAi: voiceAiConfigured(),
+  guildVoiceCommandEnabled: env.ENABLE_GUILD_VOICE_AI,
   listenTts: Boolean((env.GEMINI_TTS_API_KEY ?? env.AI_API_KEY) && env.GEMINI_TTS_MODEL),
   sourceDetection: 'automatic',
   arabicDialectDetection: aiConfigured() ? 'egyptian-vs-msa' : 'generic',
@@ -84,6 +91,12 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
     if (customId.startsWith('ai_action:')) {
       res.json({ type: InteractionResponseType.DeferredUpdateMessage });
       handleAiActionButton(interaction);
+      return;
+    }
+
+    if (customId.startsWith('smart_reply:')) {
+      res.json({ type: InteractionResponseType.DeferredUpdateMessage });
+      handleSmartReplyButton(interaction);
       return;
     }
 
@@ -179,6 +192,15 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
     return;
   }
 
+  if (name === 'voicechat') {
+    res.json({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
+    });
+    handleVoiceChatCommand(interaction);
+    return;
+  }
+
   if (name === 'ai') {
     res.json({
       type: InteractionResponseType.DeferredChannelMessageWithSource,
@@ -219,11 +241,11 @@ app.post('/interactions', verifyKeyMiddleware(env.DISCORD_PUBLIC_KEY), async (re
 });
 
 app.listen(env.PORT, env.HOST, () => {
-  console.log(`TD AI / Translator Discord v3.6 listening on ${env.HOST}:${env.PORT}`);
+  console.log(`TD AI / Translator Discord v3.7 listening on ${env.HOST}:${env.PORT}`);
   console.log('Interactions endpoint: /interactions');
 
   void startGatewayChat().catch((error) => {
-    console.error('Could not start interactive DM chat:', error instanceof Error ? error.message : error);
+    console.error('Could not start Discord gateway:', error instanceof Error ? error.message : error);
   });
 
   if (env.REGISTER_COMMANDS_ON_START && env.DISCORD_BOT_TOKEN) {
