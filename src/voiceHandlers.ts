@@ -7,10 +7,16 @@ import {
   leaveVoiceAi,
   reconnectVoiceAi,
   skipVoiceAi,
+  startVoiceTranslation,
+  stopVoiceTranslation,
   voiceAiStatus,
   voiceAiUsage,
   writeVoiceChat
 } from './services/voiceAi.js';
+import {
+  type TranslationOutput,
+  type TranslationQuality
+} from './services/voiceControl.js';
 
 function userIdOf(interaction: DiscordInteraction): string {
   const id = interaction.member?.user?.id ?? interaction.user?.id;
@@ -64,6 +70,47 @@ export function handleVoiceChatCommand(interaction: DiscordInteraction): void {
       }
 
 
+      if (action === 'translate') {
+        const languageA = nestedString(subcommand, 'language_a') ?? 'en';
+        const languageB = nestedString(subcommand, 'language_b') ?? 'ar-eg';
+        const output = (nestedString(subcommand, 'output') ?? 'both') as TranslationOutput;
+        const quality = (nestedString(subcommand, 'quality') ?? 'balanced') as TranslationQuality;
+
+        const started = await startVoiceTranslation(guildId, userId, {
+          languageA,
+          languageB,
+          output,
+          quality
+        });
+
+        await editOriginalResponse(interaction.application_id, interaction.token, {
+          content: [
+            '🌐 **TD AI Live Translation started.**',
+            `Channel: **${started.channelName}**`,
+            `Languages: **${started.translation.languageA} ⇄ ${started.translation.languageB}**`,
+            `Output: **${started.translation.output}**`,
+            `Quality: **${started.translation.quality}**`,
+            `Engine: **${started.mode === 'translate-live' ? 'Gemini 3.5 Live Translate — direct audio → audio' : 'STT → translation → TTS fallback'}**`,
+            '',
+            'Both sides can speak naturally. Native Live Translate streams translated audio directly for lower latency.',
+            'Use `/voicechat translate-stop` to return to AI conversation mode.'
+          ].join('\n'),
+          allowed_mentions: { parse: [] }
+        });
+        return;
+      }
+
+      if (action === 'translate-stop') {
+        const stopped = await stopVoiceTranslation(guildId, userId);
+        await editOriginalResponse(interaction.application_id, interaction.token, {
+          content: stopped
+            ? '✅ **Live Translation stopped.** TD AI returned to conversation mode.'
+            : 'ℹ️ Live Translation is not active in this server.',
+          allowed_mentions: { parse: [] }
+        });
+        return;
+      }
+
       if (action === 'write') {
         const text = nestedString(subcommand, 'text') ?? '';
         await writeVoiceChat(guildId, userId, text);
@@ -91,7 +138,7 @@ export function handleVoiceChatCommand(interaction: DiscordInteraction): void {
           content: [
             '🔄 **TD AI reconnected.**',
             `Channel: **${reconnected.channelName}**`,
-            'Mode: **conversation**',
+            `Mode: **${reconnected.purpose}**`,
             `Engine: **${reconnected.mode}**`
           ].join('\n'),
           allowed_mentions: { parse: [] }
@@ -146,7 +193,10 @@ export function handleVoiceChatCommand(interaction: DiscordInteraction): void {
                 `Owner: <@${status.userId}>`,
                 `Speaker access: **${status.speakerAccess === 'everyone' ? 'Everyone in channel' : 'Owner only'}**`,
                 `Participants heard: **${status.participantCount ?? 0}**`,
-                'Activation: **Always listening**',
+                `Activation: **${status.purpose === 'translation' ? 'Continuous translation' : 'Always listening'}**`,
+                status.translation
+                  ? `Translation: **${status.translation.languageA} ⇄ ${status.translation.languageB} (${status.translation.output})**`
+                  : '',
                 status.activeSpeakerId ? `Current speaker: <@${status.activeSpeakerId}>` : '',
                 `Language: **${chatLanguageLabel(status.language ?? 'auto')}**`,
                 status.voiceName ? `Voice: **${status.voiceName}**` : '',
@@ -156,7 +206,7 @@ export function handleVoiceChatCommand(interaction: DiscordInteraction): void {
                 status.inputTranscript ? `Heard: ${status.inputTranscript.slice(0, 250)}` : '',
                 status.outputTranscript ? `Last reply: ${status.outputTranscript.slice(0, 250)}` : ''
               ].filter(Boolean).join('\n')
-            : '🎙️ **TD AI Voice Chat**\nStatus: **Closed**\nJoin a voice channel and use `/voicechat join`.',
+            : '🎙️ **TD AI Voice Chat**\nStatus: **Closed**\nJoin a voice channel and use `/voicechat join` or `/voicechat translate`.',
           allowed_mentions: { parse: [] }
         });
         return;

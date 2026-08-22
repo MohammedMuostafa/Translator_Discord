@@ -235,6 +235,58 @@ export const commands = [
         options: [chatLanguageOption]
       },
       {
+        name: 'translate',
+        description: 'Start live two-way voice translation in your current channel',
+        type: 1,
+        options: [
+          {
+            name: 'language_a',
+            description: 'First language (default: English)',
+            type: 3,
+            required: false,
+            choices: targetLanguageChoicesWithDefault('English (default)').filter(
+              (item) => item.value !== 'my'
+            )
+          },
+          {
+            name: 'language_b',
+            description: 'Second language (default: Egyptian Arabic)',
+            type: 3,
+            required: false,
+            choices: targetLanguageChoicesWithDefault('Egyptian Arabic (default)').filter(
+              (item) => item.value !== 'my'
+            )
+          },
+          {
+            name: 'output',
+            description: 'Where TD AI sends translations',
+            type: 3,
+            required: false,
+            choices: [
+              { name: 'Voice & Captions', value: 'both' },
+              { name: 'Voice only', value: 'voice' },
+              { name: 'Captions only', value: 'captions' }
+            ]
+          },
+          {
+            name: 'quality',
+            description: 'Translation quality / latency profile',
+            type: 3,
+            required: false,
+            choices: [
+              { name: 'Fast', value: 'fast' },
+              { name: 'Balanced', value: 'balanced' },
+              { name: 'Accurate', value: 'accurate' }
+            ]
+          }
+        ]
+      },
+      {
+        name: 'translate-stop',
+        description: 'Stop live translation and return TD AI to conversation mode',
+        type: 1
+      },
+      {
         name: 'write',
         description: 'Write a message in the text chat attached to the current voice channel',
         type: 1,

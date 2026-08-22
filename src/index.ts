@@ -69,7 +69,7 @@ const statusPayload = () => ({
   alwaysListeningVoice: true,
   perUserPersonalization: true,
   separatedUserAdminDashboard: true,
-  liveVoiceTranslation: false,
+  liveVoiceTranslation: true,
   nativeAudioLiveTranslation: true,
   managedModelChains: true,
   voiceChatWrite: true,
