@@ -99,6 +99,7 @@ interface VoiceAiSession {
   lastTextActionAt?: number;
   voiceName: string;
   responseDelayMs: number;
+  followupSpeaker: 'same' | 'anyone';
 }
 
 const sessions = new Map<string, VoiceAiSession>();
@@ -191,6 +192,75 @@ function pcmToWav(pcm: Buffer, sampleRate = 48_000, channels = 2): Uint8Array<Ar
 
 function pcm48StereoSeconds(pcm: Buffer): number {
   return pcm.byteLength / (48_000 * 2 * 2);
+}
+
+function boostWakePcm(
+  pcm: Buffer,
+  gain = 1.8
+): Buffer {
+  const output =
+    Buffer.allocUnsafe(
+      pcm.byteLength
+    );
+
+  for (
+    let offset = 0;
+    offset + 1 < pcm.byteLength;
+    offset += 2
+  ) {
+    const sample =
+      pcm.readInt16LE(
+        offset
+      );
+
+    const boosted =
+      Math.max(
+        -32768,
+        Math.min(
+          32767,
+          Math.round(
+            sample * gain
+          )
+        )
+      );
+
+    output.writeInt16LE(
+      boosted,
+      offset
+    );
+  }
+
+  return output;
+}
+
+async function transcribeWakePcm(
+  pcm: Buffer
+): Promise<{
+  text: string;
+  language?: string;
+}> {
+  try {
+    return await transcribeAudioBytes(
+      pcmToWav(pcm),
+      'td-ai-wake.wav',
+      'audio/wav'
+    );
+  } catch (firstError) {
+    console.warn(
+      'Wake STT first pass failed; retrying with boosted audio:',
+      firstError
+    );
+
+    return transcribeAudioBytes(
+      pcmToWav(
+        boostWakePcm(
+          pcm
+        )
+      ),
+      'td-ai-wake-boosted.wav',
+      'audio/wav'
+    );
+  }
 }
 
 function stopPlayback(session: VoiceAiSession): void {
@@ -325,7 +395,7 @@ function languageSystemInstruction(
 
   if (wakeRequired) {
     base.push(
-      `Wake mode is ON. For raw microphone audio, stay completely silent unless the speaker clearly calls TD first. Accepted wake names include: ${[
+      `Wake mode is ON. The host runtime performs the wake gate before forwarding microphone audio. Wake names include: ${[
         ...wakeWords,
         'TD',
         'TD AI',
@@ -337,10 +407,10 @@ function languageSystemInstruction(
       ].filter(Boolean).join(', ')}.`
     );
     base.push(
-      'If raw audio is ordinary conversation that does not call TD, output no spoken response at all.'
+      'Every raw microphone audio turn you receive has already been authorized by the host. Do NOT require the wake word again inside that raw audio.'
     );
     base.push(
-      'After a clear TD wake call, answer the request naturally. A host-tagged [TD_ACCEPTED], [TD_WAKE], or [TD_HOST] turn is always authorized.'
+      'A host-tagged [TD_ACCEPTED], [TD_WAKE], or [TD_HOST] turn is also authorized.'
     );
   } else {
     base.push(
@@ -366,6 +436,28 @@ function languageSystemInstruction(
   }
 
   return base.join(' ');
+}
+
+function followupAuthorizedNow(
+  session: VoiceAiSession,
+  speakerId: string,
+  now = Date.now()
+): boolean {
+  if (
+    session.purpose !== 'conversation' ||
+    !session.awakeSpeakerId
+  ) {
+    return false;
+  }
+
+  const speakerAllowed =
+    session.followupSpeaker === 'anyone' ||
+    session.awakeSpeakerId === speakerId;
+
+  return (
+    speakerAllowed &&
+    session.awakeUntil > now
+  );
 }
 
 function canListenToSpeaker(session: VoiceAiSession, speakerId: string): boolean {
@@ -885,7 +977,8 @@ async function sendLiveText(
 async function processWakeGatedLiveUtterance(
   session: VoiceAiSession,
   speakerId: string,
-  chunks: Buffer[]
+  chunks: Buffer[],
+  followupAuthorizedAtStart = false
 ): Promise<void> {
   if (!chunks.length) return;
 
@@ -896,15 +989,39 @@ async function processWakeGatedLiveUtterance(
   let handedToLive = false;
 
   try {
-    // Wake detection runs without the user billing context so normal
-    // background conversation is not charged to the speaker's TD AI plan.
-    const transcript = await transcribeAudioBytes(
-      pcmToWav(pcm),
-      'td-ai-wake.wav',
-      'audio/wav'
-    );
-
     const control = await getVoiceControlSettings();
+
+    // A follow-up is authorized when the speaker STARTS talking inside
+    // the follow-up window. The sentence may finish after the timer expires.
+    // Do not run it through wake STT again; forward the natural audio
+    // directly to Gemini Live.
+    if (followupAuthorizedAtStart) {
+      session.awakeSpeakerId =
+        speakerId;
+
+      handedToLive =
+        true;
+
+      await sleep(
+        session.responseDelayMs
+      );
+
+      await sendRawPcmToLive(
+        session,
+        speakerId,
+        pcm
+      );
+
+      return;
+    }
+
+    // Sleeping state: only STT wake detection may open the session.
+    // Ordinary background speech is never forwarded to Gemini Live.
+    const transcript =
+      await transcribeWakePcm(
+        pcm
+      );
+
     const spoken = transcript.text.trim();
     if (!spoken) return;
 
@@ -1031,41 +1148,12 @@ async function processWakeGatedLiveUtterance(
       `[TD_ACCEPTED]\n${commandText}`
     );
   } catch (error) {
+    // Sleeping background speech or an unrecognized wake phrase should not
+    // create a noisy Discord error. Keep listening for the next utterance.
     console.warn(
-      'Wake STT failed; trying direct Gemini Live audio fallback:',
+      'Wake phrase was not recognized after retry:',
       error
     );
-
-    if (session.live) {
-      try {
-        handedToLive = true;
-
-        await sendRawPcmToLive(
-          session,
-          speakerId,
-          pcm
-        );
-
-        return;
-      } catch (fallbackError) {
-        handedToLive = false;
-
-        console.error(
-          'Direct Gemini Live audio fallback failed:',
-          fallbackError
-        );
-
-        await notifyUser(
-          session.userId,
-          `❌ **TD AI Voice:** ${errorMessage(fallbackError)}`
-        );
-      }
-    } else {
-      await notifyUser(
-        session.userId,
-        `❌ **TD AI Voice:** ${errorMessage(error)}`
-      );
-    }
   } finally {
     if (!handedToLive) {
       session.busy = false;
@@ -1097,15 +1185,55 @@ function attachWakeGatedLiveReceiver(
         return;
       }
 
-      if (
+      const startedWhileReplyPlaying =
         session.player.state.status !==
-        AudioPlayerStatus.Idle
+        AudioPlayerStatus.Idle;
+
+      const followupAuthorizedAtStart =
+        followupAuthorizedNow(
+          session,
+          speakerId
+        ) ||
+        (
+          startedWhileReplyPlaying &&
+          Boolean(
+            session.awakeSpeakerId
+          ) &&
+          (
+            session.followupSpeaker === 'anyone' ||
+            session.awakeSpeakerId === speakerId
+          )
+        );
+
+      if (
+        startedWhileReplyPlaying
       ) {
-        stopPlayback(session);
-        session.busy = false;
+        stopPlayback(
+          session
+        );
+
+        session.busy =
+          false;
       }
 
       if (session.busy) return;
+
+      // Once a follow-up starts inside the valid window, keep it authorized
+      // until this utterance finishes.
+      if (
+        followupAuthorizedAtStart
+      ) {
+        session.awakeSpeakerId =
+          speakerId;
+
+        session.awakeUntil =
+          Date.now() +
+          Math.max(
+            10_000,
+            env.VOICE_AI_MAX_UTTERANCE_SECONDS *
+              1000
+          );
+      }
 
       session.capturing = true;
       session.activeSpeakerId = speakerId;
@@ -1163,7 +1291,8 @@ function attachWakeGatedLiveReceiver(
         void processWakeGatedLiveUtterance(
           session,
           speakerId,
-          chunks
+          chunks,
+          followupAuthorizedAtStart
         );
       };
 
@@ -1549,7 +1678,9 @@ async function createSession(
     participantIds: new Set<string>(),
     awakeUntil: 0,
     voiceName: personal.voiceName,
-    responseDelayMs: personal.responseDelayMs
+    responseDelayMs: personal.responseDelayMs,
+    followupSpeaker:
+      control.followupSpeaker
   };
 
   sessions.set(guildId, session);

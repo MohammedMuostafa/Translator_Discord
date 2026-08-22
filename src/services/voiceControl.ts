@@ -53,8 +53,26 @@ function sanitize(value: Partial<VoiceControlSettings>): VoiceControlSettings {
     activationMode: value.activationMode === 'always' ? 'always' : 'wake-word',
     wakeWords: wakeWords.length ? wakeWords : defaults.wakeWords,
     wakeResponse: String(value.wakeResponse ?? defaults.wakeResponse).slice(0, 120),
-    wakeWindowMs: Math.min(15_000, Math.max(1_000, Number(value.wakeWindowMs ?? defaults.wakeWindowMs))),
-    followupWindowMs: Math.min(15_000, Math.max(1_000, Number(value.followupWindowMs ?? defaults.followupWindowMs))),
+    wakeWindowMs: Math.min(
+      15_000,
+      Math.max(
+        2_000,
+        Number(
+          value.wakeWindowMs ??
+          defaults.wakeWindowMs
+        )
+      )
+    ),
+    followupWindowMs: Math.min(
+      15_000,
+      Math.max(
+        3_000,
+        Number(
+          value.followupWindowMs ??
+          defaults.followupWindowMs
+        )
+      )
+    ),
     followupSpeaker: value.followupSpeaker === 'anyone' ? 'anyone' : 'same',
     productMode: ['conversation', 'translation', 'hybrid'].includes(String(value.productMode))
       ? value.productMode as VoiceProductMode
