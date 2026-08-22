@@ -50,7 +50,7 @@ function listenComponents(userId:string,text:string,language:string):Array<Recor
 }
 
 function actionLabel(action:AiAction,display?:DisplayRuntimeSettings):string{
-  const raw=(()=>{switch(action){case'summarize':return'📝 Summary';case'explain':return'🧠 Explain';case'simplify':return'💡 Simplify';case'rewrite':return'✍️ Rewrite';case'reply':return'💬 Draft Reply';default:return'🤖 TD AI'}})();
+  const raw=(()=>{switch(action){case'summarize':return'📝 Summary';case'explain':return'🧠 Explain';case'simplify':return'💡 Simplify';case'rewrite':return'✍️ Rewrite';case'reply':return'💬 Draft Reply';case'code':return'💻 Code / Dev';default:return'🤖 TD AI'}})();
   return display?.showEmojis===false?raw.replace(/^\p{Extended_Pictographic}\uFE0F?\s*/u,''):raw;
 }
 function arabicReplyLanguage(preferred:string):string{return normalizeLanguage(preferred,true)==='ar-msa'?'ar-msa':'ar-eg'}
@@ -105,7 +105,7 @@ export function handleAiActionButton(interaction:DiscordInteraction):void{
       const language=arabicReplyLanguage(prefs.incoming);const result=await createSmartReply(session.message.content,language);const smartId=createSmartReplySession(userId,session.message.content,language,result);const display=await getDisplayRuntimeSettings();
       return{content:clipDiscord(smartReplyContent(result,language,display),1900),components:smartReplyComponents(userId,smartId,result,language),allowed_mentions:{parse:[]}};
     }
-    const action=actionRaw as AiAction;if(!['summarize','explain','simplify','rewrite','reply'].includes(action))throw new Error('Unknown TD AI action.');
+    const action=actionRaw as AiAction;if(!['summarize','explain','simplify','rewrite','reply','code'].includes(action))throw new Error('Unknown TD AI action.');
     const output=await runAiAction(action,session.message.content,prefs.incoming);const display=await getDisplayRuntimeSettings();return{content:clipDiscord(`${heading(display)} ${actionLabel(action,display)}${blockGap(display)}${stabilizeRtl(output,prefs.incoming)}`,1900),components:listenComponents(userId,output,prefs.incoming),allowed_mentions:{parse:[]}};
   });
 }

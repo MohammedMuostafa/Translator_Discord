@@ -2,16 +2,24 @@ import { env } from '../config.js';
 import { languageInstruction, normalizeLanguage } from '../languages.js';
 import { callTextModel } from './modelRouter.js';
 
-export type AiAction = 'summarize' | 'explain' | 'simplify' | 'rewrite' | 'reply' | 'ask';
+export type AiAction = 'summarize' | 'explain' | 'simplify' | 'rewrite' | 'reply' | 'code' | 'ask';
 
 function actionInstruction(action: AiAction): string {
   switch (action) {
-    case 'summarize': return 'Summarize the supplied content accurately. Keep important names, numbers, dates, requirements, links and decisions. Use a short overview followed by bullets when helpful.';
-    case 'explain': return 'Explain what the supplied content means in a clear teaching style. Explain jargon, context and implications. Separate facts from your interpretation and do not invent missing context.';
-    case 'simplify': return 'Rewrite the supplied content in much simpler language while preserving the important meaning, names, numbers and links.';
-    case 'rewrite': return 'Rewrite the supplied content to be clearer, better structured and more natural. Preserve the original meaning and factual claims. Keep useful Discord Markdown.';
-    case 'reply': return 'Draft a natural, useful reply to the supplied message. Do not claim the reply was sent. Return only the proposed reply unless a tiny note is necessary.';
-    default: return 'Answer the user request helpfully and accurately using the supplied content as context.';
+    case 'summarize':
+      return 'Summarize the supplied content accurately. Keep important names, numbers, dates, requirements, links and decisions. Use a short overview followed by bullets when helpful.';
+    case 'explain':
+      return 'Explain what the supplied content means in a clear teaching style. Explain jargon, context and implications. Separate facts from your interpretation and do not invent missing context.';
+    case 'simplify':
+      return 'Rewrite the supplied content in much simpler language while preserving the important meaning, names, numbers and links.';
+    case 'rewrite':
+      return 'Rewrite the supplied content to be clearer, better structured and more natural. Preserve the original meaning and factual claims. Keep useful Discord Markdown.';
+    case 'reply':
+      return 'Draft a natural, useful reply to the supplied message. Do not claim the reply was sent. Return only the proposed reply unless a tiny note is necessary.';
+    case 'code':
+      return 'You are an expert software engineer. Write, review, optimize, debug, or explain code. Always use proper Markdown fenced code blocks with language identifiers. Provide concise, clean, production-grade solutions.';
+    default:
+      return 'Answer the user request helpfully and accurately using the supplied content as context.';
   }
 }
 
@@ -47,21 +55,26 @@ export async function runAiAction(
   const clean = text.trim();
   if (!clean) throw new Error('There is no text to process.');
   if (clean.length > env.AI_ACTION_MAX_CHARS) {
-    throw new Error(`This text is too long for an AI action. Maximum: ${env.AI_ACTION_MAX_CHARS.toLocaleString()} characters.`);
+    throw new Error(
+      `This text is too long for an AI action. Maximum: ${env.AI_ACTION_MAX_CHARS.toLocaleString()} characters.`
+    );
   }
 
-  const userContent = action === 'ask'
-    ? `Question / request:\n${customQuestion?.trim() || clean}`
-    : `Content:\n${clean}`;
+  const userContent =
+    action === 'ask' || action === 'code'
+      ? `Request:\n${customQuestion?.trim() || clean}`
+      : `Content:\n${clean}`;
+
+  const taskName = action === 'code' ? 'code' : 'ai_tools';
 
   const response = await callTextModel(
-    'ai_tools',
+    taskName,
     [
       { role: 'system', content: systemPrompt(action, language) },
       { role: 'user', content: userContent }
     ],
     {
-      temperature: action === 'reply' || action === 'rewrite' ? 0.55 : 0.25,
+      temperature: action === 'reply' || action === 'rewrite' ? 0.55 : action === 'code' ? 0.2 : 0.25,
       timeoutMs: env.AI_ACTION_TIMEOUT_MS
     }
   );

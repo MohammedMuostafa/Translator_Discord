@@ -128,6 +128,7 @@ export const commands = [
           { name: '💡 Simplify', value: 'simplify' },
           { name: '✍️ Rewrite', value: 'rewrite' },
           { name: '💬 Draft Reply', value: 'reply' },
+          { name: '💻 Code / Review', value: 'code' },
           { name: '🤖 Ask AI', value: 'ask' }
         ]
       },

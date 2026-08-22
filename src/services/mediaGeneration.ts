@@ -1,9 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
-import { randomUUID } from 'node:crypto';
-import { readFile, unlink } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { env } from '../config.js';
 import {
   assertCreditsAvailable,
   assertMediaAccess,
@@ -17,15 +11,21 @@ import {
   type ImageQuality,
   type VideoQuality
 } from './modelCatalog.js';
+import {
+  getResolvedTaskRoute,
+  parseModelChain
+} from './runtimeConfig.js';
+import {
+  executeImageAdapter,
+  type GeneratedImageResult,
+  type MediaAspectRatio
+} from '../providers/adapters/imageAdapter.js';
+import {
+  executeVideoAdapter,
+  type GeneratedVideoResult
+} from '../providers/adapters/videoAdapter.js';
 
-export type MediaAspectRatio =
-  | '1:1'
-  | '3:2'
-  | '2:3'
-  | '4:3'
-  | '3:4'
-  | '16:9'
-  | '9:16';
+export type { MediaAspectRatio };
 
 export type GeneratedMedia = {
   filename: string;
@@ -53,20 +53,6 @@ const VIDEO_CREDITS: Record<VideoQuality, number> = {
   cinematic: 30_000
 };
 
-function mediaApiKey(): string {
-  const key =
-    env.GEMINI_LIVE_API_KEY ??
-    env.GEMINI_TTS_API_KEY ??
-    env.GEMINI_STT_API_KEY ??
-    env.AI_API_KEY;
-
-  if (!key) {
-    throw new Error('Gemini media generation is not configured on this deployment.');
-  }
-
-  return key;
-}
-
 function statusOf(error: unknown): number | undefined {
   if (error && typeof error === 'object' && 'status' in error) {
     const value = Number((error as { status?: unknown }).status);
@@ -89,88 +75,15 @@ function providerMessage(error: unknown, kind: 'image' | 'video'): string {
     lower.includes('quota')
   ) {
     return kind === 'video'
-      ? 'Google Veo quota is unavailable or exhausted for this API project. TD AI did not charge product credits. Veo requires an eligible paid Gemini API project; check billing/quota, then try again.'
-      : 'Google image-generation quota is unavailable or exhausted for this API project. TD AI did not charge product credits. Gemini image-generation API models require an eligible paid tier; check billing/quota, then try again.';
+      ? 'Video generation quota is unavailable or exhausted for this API project. TD AI did not charge product credits.'
+      : 'Image generation quota is unavailable or exhausted for this API project. TD AI did not charge product credits.';
   }
 
   if (status === 403) {
-    return `Google ${kind} generation is not enabled for this API project or billing tier. TD AI did not charge product credits.`;
+    return `Provider ${kind} generation is not enabled for this API project or billing tier. TD AI did not charge product credits.`;
   }
 
   return raw.length > 700 ? `${raw.slice(0, 700)}…` : raw;
-}
-
-function imageSize(
-  model: string,
-  quality: ImageQuality
-): '1K' | '2K' | '4K' | undefined {
-  // Gemini 2.5 Flash Image accepts aspect ratio but not the newer imageSize field.
-  if (model === 'gemini-2.5-flash-image') return undefined;
-  if (model.includes('flash-lite-image')) return '1K';
-  if (model === 'gemini-3-pro-image' && quality === 'premium') return '4K';
-  if (quality === 'standard' || quality === 'premium') return '2K';
-  return '1K';
-}
-
-function imageContents(
-  prompt: string,
-  source?: {
-    data: Uint8Array<ArrayBufferLike>;
-    contentType: string;
-  }
-): Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> {
-  const parts: Array<{
-    text?: string;
-    inlineData?: { mimeType: string; data: string };
-  }> = [{ text: prompt }];
-
-  if (source) {
-    parts.push({
-      inlineData: {
-        mimeType: source.contentType,
-        data: Buffer.from(source.data).toString('base64')
-      }
-    });
-  }
-
-  return parts;
-}
-
-function firstGeneratedImage(response: unknown): {
-  data: string;
-  mimeType: string;
-} | undefined {
-  const typed = response as {
-    candidates?: Array<{
-      content?: {
-        parts?: Array<{
-          inlineData?: {
-            data?: string;
-            mimeType?: string;
-          };
-        }>;
-      };
-    }>;
-  };
-
-  for (const candidate of typed.candidates ?? []) {
-    for (const part of candidate.content?.parts ?? []) {
-      if (part.inlineData?.data) {
-        return {
-          data: part.inlineData.data,
-          mimeType: part.inlineData.mimeType ?? 'image/png'
-        };
-      }
-    }
-  }
-
-  return undefined;
-}
-
-function imageFilename(contentType: string): string {
-  if (contentType.includes('jpeg') || contentType.includes('jpg')) return 'td-ai-image.jpg';
-  if (contentType.includes('webp')) return 'td-ai-image.webp';
-  return 'td-ai-image.png';
 }
 
 export async function generateImageForUser(
@@ -190,52 +103,46 @@ export async function generateImageForUser(
   await assertMediaAccess(userId, kind);
 
   const account = await getUserAccount(userId);
-  const models = imageModelsForPlan(account.planId, quality);
-  if (!models.length) {
+  const planModels = imageModelsForPlan(account.planId, quality);
+  if (!planModels.length && account.planId === 'free' && quality === 'premium') {
     throw new Error(`${quality} image quality is not available on your ${account.planId} plan.`);
   }
 
   const credits = source ? IMAGE_EDIT_CREDITS[quality] : IMAGE_CREDITS[quality];
   await assertCreditsAvailable(userId, credits);
 
-  const ai = new GoogleGenAI({ apiKey: mediaApiKey() });
+  const route = await getResolvedTaskRoute(kind);
+  const configuredModels = parseModelChain(route.model);
+  const modelsToTry =
+    route.providerName.startsWith('Environment Gemini')
+      ? planModels.length ? planModels : configuredModels
+      : configuredModels.length ? configuredModels : planModels;
+
   const errors: string[] = [];
 
-  for (const model of models) {
+  for (const model of modelsToTry) {
     try {
-      const size = imageSize(model, quality);
-      const response = await (ai as unknown as { models: { generateContent(input: unknown): Promise<unknown> } }).models.generateContent({
+      const generated: GeneratedImageResult = await executeImageAdapter({
+        providerKind: route.transport,
+        providerName: route.providerName,
+        apiUrl: route.apiUrl,
+        apiKey: route.apiKey,
         model,
-        contents: [{
-          role: 'user',
-          parts: imageContents(cleanPrompt, source)
-        }],
-        config: {
-          responseModalities: ['IMAGE'],
-          responseFormat: {
-            image: {
-              aspectRatio,
-              ...(size ? { imageSize: size } : {})
-            }
-          }
-        }
-      } as never);
+        prompt: cleanPrompt,
+        quality,
+        aspectRatio,
+        source
+      });
 
-      const generated = firstGeneratedImage(response);
-      if (!generated?.data) {
-        throw new Error(`${model} returned no image data.`);
-      }
-
-      const bytes = Buffer.from(generated.data, 'base64');
       await recordUsage(userId, kind, credits);
       await recordMediaJob(userId, kind);
 
       return {
-        filename: imageFilename(generated.mimeType),
-        contentType: generated.mimeType,
-        data: new Uint8Array(bytes),
+        filename: generated.filename,
+        contentType: generated.contentType,
+        data: generated.data,
         quality,
-        model
+        model: generated.model
       };
     } catch (error) {
       errors.push(`${model}: ${providerMessage(error, 'image')}`);
@@ -245,70 +152,44 @@ export async function generateImageForUser(
     }
   }
 
+  // If primary route failed and fallback exists, try fallback
+  if (route.fallback) {
+    const fbModels = parseModelChain(route.fallback.model);
+    for (const model of fbModels) {
+      try {
+        const generated: GeneratedImageResult = await executeImageAdapter({
+          providerKind: route.fallback.transport,
+          providerName: route.fallback.providerName,
+          apiUrl: route.fallback.apiUrl,
+          apiKey: route.fallback.apiKey,
+          model,
+          prompt: cleanPrompt,
+          quality,
+          aspectRatio,
+          source
+        });
+
+        await recordUsage(userId, kind, credits);
+        await recordMediaJob(userId, kind);
+
+        return {
+          filename: generated.filename,
+          contentType: generated.contentType,
+          data: generated.data,
+          quality,
+          model: generated.model
+        };
+      } catch (error) {
+        errors.push(`${route.fallback.providerName}/${model}: ${providerMessage(error, 'image')}`);
+        console.warn(`Fallback image model failed (${model}); trying next model.`, error);
+      }
+    }
+  }
+
   throw new Error(
     errors.at(-1)?.split(': ').slice(1).join(': ') ||
-      'All image-generation models are currently unavailable.'
+      'All configured image-generation models are currently unavailable.'
   );
-}
-
-type VideoOperationLike = {
-  done?: boolean;
-  response?: {
-    generatedVideos?: Array<{
-      video?: unknown;
-    }>;
-  };
-};
-
-type MediaClient = {
-  models: {
-    generateVideos(input: Record<string, unknown>): Promise<VideoOperationLike>;
-  };
-  operations: {
-    getVideosOperation(input: { operation: VideoOperationLike }): Promise<VideoOperationLike>;
-  };
-  files: {
-    download(input: { file: unknown; downloadPath: string }): Promise<unknown>;
-  };
-};
-
-async function generateVideoWithModel(
-  mediaClient: MediaClient,
-  model: string,
-  prompt: string,
-  aspectRatio: '16:9' | '9:16'
-): Promise<Uint8Array<ArrayBufferLike>> {
-  let operation = await mediaClient.models.generateVideos({
-    model,
-    prompt,
-    config: {
-      aspectRatio,
-      numberOfVideos: 1
-    }
-  });
-
-  const deadline = Date.now() + 14 * 60_000;
-  while (!operation.done) {
-    if (Date.now() > deadline) {
-      throw new Error('Video generation took too long. Try again with a shorter prompt.');
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 10_000));
-    operation = await mediaClient.operations.getVideosOperation({ operation });
-  }
-
-  const video = operation.response?.generatedVideos?.[0]?.video;
-  if (!video) throw new Error(`${model} finished without a video file.`);
-
-  const tempName = `td-ai-${randomUUID()}.mp4`;
-  const filePath = path.join(os.tmpdir(), tempName);
-
-  try {
-    await mediaClient.files.download({ file: video, downloadPath: filePath });
-    return new Uint8Array(await readFile(filePath));
-  } finally {
-    await unlink(filePath).catch(() => undefined);
-  }
 }
 
 export async function generateVideoForUser(
@@ -322,36 +203,45 @@ export async function generateVideoForUser(
 
   await assertMediaAccess(userId, 'video_generate');
   const account = await getUserAccount(userId);
-  const models = videoModelsForPlan(account.planId, quality);
-  if (!models.length) {
+  const planModels = videoModelsForPlan(account.planId, quality);
+  if (!planModels.length) {
     throw new Error(`${quality} video quality is not available on your ${account.planId} plan.`);
   }
 
   const credits = VIDEO_CREDITS[quality];
   await assertCreditsAvailable(userId, credits);
 
-  const ai = new GoogleGenAI({ apiKey: mediaApiKey() });
-  const mediaClient = ai as unknown as MediaClient;
+  const route = await getResolvedTaskRoute('video_generate');
+  const configuredModels = parseModelChain(route.model);
+  const modelsToTry =
+    route.providerName.startsWith('Environment Gemini')
+      ? planModels
+      : configuredModels.length ? configuredModels : planModels;
+
   const errors: string[] = [];
 
-  for (const model of models) {
+  for (const model of modelsToTry) {
     try {
-      const bytes = await generateVideoWithModel(
-        mediaClient,
+      const generated: GeneratedVideoResult = await executeVideoAdapter({
+        providerKind: route.transport,
+        providerName: route.providerName,
+        apiUrl: route.apiUrl,
+        apiKey: route.apiKey,
         model,
-        cleanPrompt,
+        prompt: cleanPrompt,
+        quality,
         aspectRatio
-      );
+      });
 
       await recordUsage(userId, 'video_generate', credits);
       await recordMediaJob(userId, 'video_generate');
 
       return {
-        filename: 'td-ai-video.mp4',
-        contentType: 'video/mp4',
-        data: bytes,
+        filename: generated.filename,
+        contentType: generated.contentType,
+        data: generated.data,
         quality,
-        model
+        model: generated.model
       };
     } catch (error) {
       const message = providerMessage(error, 'video');

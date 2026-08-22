@@ -11,6 +11,7 @@ export type SubscriptionStatus = 'active' | 'paused' | 'expired';
 export type UsageFeature =
   | 'translation'
   | 'chat'
+  | 'code'
   | 'ai_tools'
   | 'smart_reply'
   | 'voice_ai'

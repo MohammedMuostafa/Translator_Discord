@@ -8,59 +8,48 @@ import {
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../config.js';
+import type {
+  DisplayDensity,
+  DisplayDivider,
+  DisplayHeadingSize,
+  DisplayRuntimeSettings,
+  GeminiTask,
+  MediaTask,
+  ModelRegistration,
+  ProviderKind,
+  ProviderProfile,
+  RuntimeTask,
+  TaskRoute,
+  TextTask,
+  TextTransport,
+  ThinkingLevelName,
+  VoiceRuntimeSettings,
+  VoiceSpeakerAccess
+} from './runtimeConfigTypes.js';
 
-export type TextTask = 'translation' | 'chat' | 'ai_tools' | 'smart_reply';
-export type GeminiTask = 'voice_live' | 'voice_translate' | 'stt' | 'tts';
-export type RuntimeTask = TextTask | GeminiTask;
-export type ProviderKind = 'openai-compatible' | 'gemini-native';
-export type ThinkingLevelName = 'minimal' | 'low' | 'medium' | 'high';
-export type VoiceSpeakerAccess = 'everyone' | 'owner-only';
-export type DisplayDensity = 'compact' | 'comfortable' | 'relaxed';
-export type DisplayHeadingSize = 'large' | 'medium' | 'small';
-export type DisplayDivider = 'none' | 'line' | 'spaced';
-export type TextTransport = 'openai-compatible' | 'gemini-native';
-
-export type ProviderProfile = {
-  id: string;
-  name: string;
-  kind: ProviderKind;
-  apiUrl?: string;
-  encryptedApiKey: string;
-  apiKeyHint: string;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
+export type {
+  DisplayDensity,
+  DisplayDivider,
+  DisplayHeadingSize,
+  DisplayRuntimeSettings,
+  GeminiTask,
+  MediaTask,
+  ModelRegistration,
+  ProviderKind,
+  ProviderProfile,
+  RuntimeTask,
+  TaskRoute,
+  TextTask,
+  TextTransport,
+  ThinkingLevelName,
+  VoiceRuntimeSettings,
+  VoiceSpeakerAccess
 };
 
-export type TaskRoute = {
-  providerId: string;
-  model: string;
-};
-
-export type VoiceRuntimeSettings = {
-  thinkingLevel: ThinkingLevelName;
-  silenceMs: number;
-  liveVoice: string;
-  ttsVoice: string;
-  speakerAccess: VoiceSpeakerAccess;
-};
-
-export type DisplayRuntimeSettings = {
-  headingSize: DisplayHeadingSize;
-  density: DisplayDensity;
-  divider: DisplayDivider;
-  showEmojis: boolean;
-  showDetectedLanguage: boolean;
-  showProvider: boolean;
-  showOriginal: boolean;
-  quoteArabic: boolean;
-  originalPreviewChars: number;
-  smartAnswerArabicFirst: boolean;
-};
-
-type RuntimeConfigFile = {
-  version: 2;
+export type RuntimeConfigFile = {
+  version: 3;
   providers: ProviderProfile[];
+  models: ModelRegistration[];
   routes: Partial<Record<RuntimeTask, TaskRoute>>;
   voice: Partial<VoiceRuntimeSettings>;
   display: Partial<DisplayRuntimeSettings>;
@@ -68,19 +57,113 @@ type RuntimeConfigFile = {
 };
 
 const CONFIG_FILE = path.join(env.DATA_DIR, 'runtime-config.json');
-const TEXT_TASKS = new Set<TextTask>([
+
+export const TEXT_TASKS = new Set<TextTask>([
   'translation',
   'chat',
+  'code',
   'ai_tools',
   'smart_reply'
 ]);
 
+export const MEDIA_TASKS = new Set<MediaTask>([
+  'image_generate',
+  'image_edit',
+  'video_generate'
+]);
+
+export const GEMINI_TASKS = new Set<GeminiTask>([
+  'voice_live',
+  'voice_translate',
+  'stt',
+  'tts'
+]);
+
+export const ALL_TASKS: RuntimeTask[] = [
+  'translation',
+  'chat',
+  'code',
+  'ai_tools',
+  'smart_reply',
+  'image_generate',
+  'image_edit',
+  'video_generate',
+  'voice_live',
+  'voice_translate',
+  'stt',
+  'tts'
+];
+
+export const PROVIDER_KIND_CAPABILITIES: Record<ProviderKind, RuntimeTask[]> = {
+  'gemini-native': [
+    'translation',
+    'chat',
+    'code',
+    'ai_tools',
+    'smart_reply',
+    'image_generate',
+    'image_edit',
+    'video_generate',
+    'voice_live',
+    'voice_translate',
+    'stt',
+    'tts'
+  ],
+  'openai-native': [
+    'translation',
+    'chat',
+    'code',
+    'ai_tools',
+    'smart_reply',
+    'image_generate',
+    'image_edit',
+    'stt',
+    'tts'
+  ],
+  'openai-compatible': [
+    'translation',
+    'chat',
+    'code',
+    'ai_tools',
+    'smart_reply',
+    'image_generate',
+    'image_edit'
+  ],
+  'anthropic-native': [
+    'translation',
+    'chat',
+    'code',
+    'ai_tools',
+    'smart_reply'
+  ],
+  'openrouter': [
+    'translation',
+    'chat',
+    'code',
+    'ai_tools',
+    'smart_reply',
+    'image_generate'
+  ]
+};
+
+export const TASK_DEFINITIONS: Array<{ id: RuntimeTask; label: string; category: 'text' | 'media' | 'voice' }> = [
+  { id: 'translation', label: 'Translation', category: 'text' },
+  { id: 'chat', label: 'AI Chat', category: 'text' },
+  { id: 'code', label: 'Code & Dev Tasks', category: 'text' },
+  { id: 'ai_tools', label: 'Summarize / Explain / Rewrite', category: 'text' },
+  { id: 'smart_reply', label: 'Smart Answer', category: 'text' },
+  { id: 'image_generate', label: 'Image Generation', category: 'media' },
+  { id: 'image_edit', label: 'Image Editing', category: 'media' },
+  { id: 'video_generate', label: 'Video Generation', category: 'media' },
+  { id: 'voice_live', label: 'Live Voice AI', category: 'voice' },
+  { id: 'voice_translate', label: 'Live Voice Translation', category: 'voice' },
+  { id: 'stt', label: 'Speech Recognition (STT)', category: 'voice' },
+  { id: 'tts', label: 'Listen / Speech (TTS)', category: 'voice' }
+];
+
 /**
  * Managed Gemini model chains.
- *
- * These are intentionally server-managed so the dashboard never needs manual
- * edits when one Gemini model becomes rate-limited. Text requests walk the
- * chain automatically. Live/STT/TTS callers also walk their chains.
+ * Walked automatically upon rate-limits or failover.
  */
 export const MANAGED_MODEL_CHAINS: Record<RuntimeTask, string> = {
   translation: [
@@ -99,6 +182,13 @@ export const MANAGED_MODEL_CHAINS: Record<RuntimeTask, string> = {
     'gemini-3.1-flash-lite',
     'gemini-2.5-flash'
   ].join(' | '),
+  code: [
+    'gemini-3.7-flash',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite'
+  ].join(' | '),
   ai_tools: [
     'gemini-3.7-flash',
     'gemini-3.6-flash',
@@ -112,6 +202,22 @@ export const MANAGED_MODEL_CHAINS: Record<RuntimeTask, string> = {
     'gemini-3.5-flash-lite',
     'gemini-3.1-flash-lite',
     'gemini-2.5-flash'
+  ].join(' | '),
+  image_generate: [
+    'gemini-3.1-flash-image',
+    'gemini-3.1-flash-lite-image',
+    'gemini-2.5-flash-image',
+    'gemini-3-pro-image'
+  ].join(' | '),
+  image_edit: [
+    'gemini-3.1-flash-image',
+    'gemini-2.5-flash-image',
+    'gemini-3.1-flash-lite-image'
+  ].join(' | '),
+  video_generate: [
+    'veo-3.1-lite-generate-preview',
+    'veo-3.1-fast-generate-preview',
+    'veo-3.1-generate-preview'
   ].join(' | '),
   voice_live: [
     'gemini-3.1-flash-live-preview',
@@ -131,17 +237,6 @@ export const MANAGED_MODEL_CHAINS: Record<RuntimeTask, string> = {
 
 let cached: RuntimeConfigFile | undefined;
 let writeChain = Promise.resolve();
-
-function defaultConfig(): RuntimeConfigFile {
-  return {
-    version: 2,
-    providers: [],
-    routes: {},
-    voice: {},
-    display: {},
-    updatedAt: new Date().toISOString()
-  };
-}
 
 export function normalizeModelId(value: string): string {
   const model = value.trim().replace(/^models\//i, '');
@@ -171,8 +266,138 @@ export function parseModelChain(value: string): string[] {
   ];
 }
 
-function normalizeChain(value: string): string {
+export function normalizeChain(value: string): string {
   return parseModelChain(value).join(' | ');
+}
+
+function defaultModels(): ModelRegistration[] {
+  return [
+    // Built-in Gemini Models
+    {
+      id: 'gemini-3.7-flash',
+      providerId: 'env-gemini',
+      label: 'Gemini 3.7 Flash',
+      capabilities: ['translation', 'chat', 'code', 'ai_tools', 'smart_reply'],
+      enabled: true,
+      priority: 100
+    },
+    {
+      id: 'gemini-3.6-flash',
+      providerId: 'env-gemini',
+      label: 'Gemini 3.6 Flash',
+      capabilities: ['translation', 'chat', 'code', 'ai_tools', 'smart_reply'],
+      enabled: true,
+      priority: 90
+    },
+    {
+      id: 'gemini-3.5-flash',
+      providerId: 'env-gemini',
+      label: 'Gemini 3.5 Flash',
+      capabilities: ['translation', 'chat', 'code', 'ai_tools', 'smart_reply'],
+      enabled: true,
+      priority: 80
+    },
+    {
+      id: 'gemini-3.1-flash-lite',
+      providerId: 'env-gemini',
+      label: 'Gemini 3.1 Flash Lite',
+      capabilities: ['translation', 'chat', 'code', 'ai_tools', 'smart_reply', 'stt'],
+      enabled: true,
+      priority: 70
+    },
+    {
+      id: 'gemini-2.5-flash',
+      providerId: 'env-gemini',
+      label: 'Gemini 2.5 Flash',
+      capabilities: ['translation', 'chat', 'code', 'ai_tools', 'smart_reply', 'stt'],
+      enabled: true,
+      priority: 60
+    },
+    {
+      id: 'gemini-3.1-flash-image',
+      providerId: 'env-gemini',
+      label: 'Nano Banana 2 (Gemini 3.1 Image)',
+      capabilities: ['image_generate', 'image_edit'],
+      enabled: true,
+      priority: 100
+    },
+    {
+      id: 'gemini-3.1-flash-lite-image',
+      providerId: 'env-gemini',
+      label: 'Nano Banana 2 Lite',
+      capabilities: ['image_generate', 'image_edit'],
+      enabled: true,
+      priority: 90
+    },
+    {
+      id: 'gemini-3-pro-image',
+      providerId: 'env-gemini',
+      label: 'Nano Banana Pro',
+      capabilities: ['image_generate', 'image_edit'],
+      enabled: true,
+      priority: 80
+    },
+    {
+      id: 'veo-3.1-lite-generate-preview',
+      providerId: 'env-gemini',
+      label: 'Veo 3.1 Lite',
+      capabilities: ['video_generate'],
+      enabled: true,
+      priority: 100
+    },
+    {
+      id: 'veo-3.1-fast-generate-preview',
+      providerId: 'env-gemini',
+      label: 'Veo 3.1 Fast',
+      capabilities: ['video_generate'],
+      enabled: true,
+      priority: 90
+    },
+    {
+      id: 'veo-3.1-generate-preview',
+      providerId: 'env-gemini',
+      label: 'Veo 3.1 Cinematic',
+      capabilities: ['video_generate'],
+      enabled: true,
+      priority: 80
+    },
+    {
+      id: 'gemini-3.1-flash-live-preview',
+      providerId: 'env-gemini',
+      label: 'Gemini 3.1 Flash Live',
+      capabilities: ['voice_live'],
+      enabled: true,
+      priority: 100
+    },
+    {
+      id: 'gemini-3.5-live-translate-preview',
+      providerId: 'env-gemini',
+      label: 'Gemini 3.5 Live Translate',
+      capabilities: ['voice_translate'],
+      enabled: true,
+      priority: 100
+    },
+    {
+      id: 'gemini-3.1-flash-tts-preview',
+      providerId: 'env-gemini',
+      label: 'Gemini 3.1 Flash TTS',
+      capabilities: ['tts'],
+      enabled: true,
+      priority: 100
+    }
+  ];
+}
+
+function defaultConfig(): RuntimeConfigFile {
+  return {
+    version: 3,
+    providers: [],
+    models: defaultModels(),
+    routes: {},
+    voice: {},
+    display: {},
+    updatedAt: new Date().toISOString()
+  };
 }
 
 function normalizeRoutes(
@@ -184,7 +409,9 @@ function normalizeRoutes(
     const typedTask = task as RuntimeTask;
     normalized[typedTask] = {
       providerId: route.providerId,
-      model: route.model ? normalizeChain(route.model) : MANAGED_MODEL_CHAINS[typedTask]
+      model: route.model ? normalizeChain(route.model) : MANAGED_MODEL_CHAINS[typedTask] ?? '',
+      fallbackProviderId: route.fallbackProviderId?.trim() || undefined,
+      fallbackModel: route.fallbackModel ? normalizeChain(route.fallbackModel) : undefined
     };
   }
   return normalized;
@@ -201,7 +428,7 @@ function encryptionKey(): Buffer {
     .digest();
 }
 
-function encryptSecret(value: string): string {
+export function encryptSecret(value: string): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', encryptionKey(), iv);
   const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
@@ -214,7 +441,7 @@ function encryptSecret(value: string): string {
   ].join('.');
 }
 
-function decryptSecret(value: string): string {
+export function decryptSecret(value: string): string {
   const [version, ivRaw, tagRaw, ciphertextRaw] = value.split('.');
   if (version !== 'v1' || !ivRaw || !tagRaw || !ciphertextRaw) {
     throw new Error('Stored provider secret has an unsupported format.');
@@ -238,12 +465,19 @@ async function load(): Promise<RuntimeConfigFile> {
 
   try {
     const raw = await readFile(CONFIG_FILE, 'utf8');
-    const parsed = JSON.parse(raw) as Partial<RuntimeConfigFile>;
+    const parsed = JSON.parse(raw) as Partial<RuntimeConfigFile> & { version?: number };
+    
+    // Migration: ensure models array exists and populate defaults if empty
+    const existingModels = Array.isArray(parsed.models) && parsed.models.length > 0
+      ? parsed.models
+      : defaultModels();
+
     cached = {
       ...defaultConfig(),
       ...parsed,
-      version: 2,
+      version: 3,
       providers: Array.isArray(parsed.providers) ? parsed.providers : [],
+      models: existingModels,
       routes: normalizeRoutes(parsed.routes ?? {}),
       voice: parsed.voice ?? {},
       display: parsed.display ?? {}
@@ -260,7 +494,7 @@ async function load(): Promise<RuntimeConfigFile> {
 async function persist(next: RuntimeConfigFile): Promise<void> {
   const clean: RuntimeConfigFile = {
     ...next,
-    version: 2,
+    version: 3,
     routes: normalizeRoutes(next.routes),
     updatedAt: new Date().toISOString()
   };
@@ -278,7 +512,7 @@ async function persist(next: RuntimeConfigFile): Promise<void> {
   await writeChain;
 }
 
-function providerById(config: RuntimeConfigFile, id: string): ProviderProfile | undefined {
+export function providerById(config: RuntimeConfigFile, id: string): ProviderProfile | undefined {
   return config.providers.find((provider) => provider.id === id && provider.enabled);
 }
 
@@ -292,27 +526,24 @@ function isGoogleGeminiUrl(url: string | undefined): boolean {
 }
 
 function fallbackProvider(task: RuntimeTask): string {
-  return TEXT_TASKS.has(task as TextTask) ? 'env-text' : 'env-gemini';
+  if (TEXT_TASKS.has(task as TextTask)) {
+    return env.AI_API_KEY && !isGoogleGeminiUrl(env.AI_API_URL) ? 'env-text' : 'env-gemini';
+  }
+  return 'env-gemini';
 }
 
 function managedChain(task: RuntimeTask): string {
-  return MANAGED_MODEL_CHAINS[task];
+  return MANAGED_MODEL_CHAINS[task] ?? '';
+}
+
+export function validateTaskCapability(kind: ProviderKind, task: RuntimeTask): boolean {
+  const allowed = PROVIDER_KIND_CAPABILITIES[kind];
+  return allowed?.includes(task) ?? false;
 }
 
 function effectiveRoutes(config: RuntimeConfigFile): Record<RuntimeTask, TaskRoute> {
-  const tasks: RuntimeTask[] = [
-    'translation',
-    'chat',
-    'ai_tools',
-    'smart_reply',
-    'voice_live',
-    'voice_translate',
-    'stt',
-    'tts'
-  ];
-
   return Object.fromEntries(
-    tasks.map((task) => {
+    ALL_TASKS.map((task) => {
       const saved = config.routes[task];
       const providerId = saved?.providerId || fallbackProvider(task);
       const builtIn = providerId === 'env-text' || providerId === 'env-gemini';
@@ -320,16 +551,20 @@ function effectiveRoutes(config: RuntimeConfigFile): Record<RuntimeTask, TaskRou
         task,
         {
           providerId,
-          // Built-in Gemini routes are managed by TD AI and stay stable.
-          // Custom providers retain their explicit model chain.
           model: builtIn
             ? managedChain(task)
-            : normalizeChain(saved?.model || managedChain(task))
+            : normalizeChain(saved?.model || managedChain(task)),
+          fallbackProviderId: saved?.fallbackProviderId,
+          fallbackModel: saved?.fallbackModel ? normalizeChain(saved.fallbackModel) : undefined
         }
       ];
     })
   ) as Record<RuntimeTask, TaskRoute>;
 }
+
+// ---------------------------------------------------------------------------
+// Public Admin Snapshot & Query Functions
+// ---------------------------------------------------------------------------
 
 export async function getAdminRuntimeSnapshot() {
   const config = await load();
@@ -352,17 +587,19 @@ export async function getAdminRuntimeSnapshot() {
           ? `••••${env.AI_API_KEY.slice(-4)}`
           : 'Not configured',
         enabled: Boolean(env.AI_API_KEY),
-        builtIn: true
+        builtIn: true,
+        notes: 'Loaded from environment variables AI_API_KEY & AI_API_URL'
       },
       {
         id: 'env-gemini',
-        name: 'Environment Gemini',
+        name: 'Environment Gemini Hub',
         kind: 'gemini-native' as const,
         apiKeyHint: envGeminiKey
           ? `••••${envGeminiKey.slice(-4)}`
           : 'Not configured',
         enabled: Boolean(envGeminiKey),
-        builtIn: true
+        builtIn: true,
+        notes: 'Full multimodal Gemini engine for text, code, images, video, live voice'
       },
       ...config.providers.map((provider) => ({
         id: provider.id,
@@ -371,12 +608,15 @@ export async function getAdminRuntimeSnapshot() {
         apiUrl: provider.apiUrl,
         apiKeyHint: provider.apiKeyHint,
         enabled: provider.enabled,
-        builtIn: false
+        builtIn: false,
+        notes: provider.notes
       }))
     ],
+    models: config.models,
     routes: effectiveRoutes(config),
     savedRoutes: config.routes,
     managedModelChains: MANAGED_MODEL_CHAINS,
+    providerKindCapabilities: PROVIDER_KIND_CAPABILITIES,
     voice: {
       thinkingLevel: config.voice.thinkingLevel ?? env.GEMINI_LIVE_THINKING_LEVEL,
       silenceMs: config.voice.silenceMs ?? env.VOICE_AI_SILENCE_MS,
@@ -385,19 +625,14 @@ export async function getAdminRuntimeSnapshot() {
       speakerAccess: config.voice.speakerAccess ?? 'everyone'
     },
     display: await getDisplayRuntimeSettings(),
-    tasks: [
-      { id: 'translation', kind: 'openai-compatible', label: 'Translation' },
-      { id: 'chat', kind: 'openai-compatible', label: 'AI Chat' },
-      { id: 'ai_tools', kind: 'openai-compatible', label: 'Summarize / Explain / Rewrite' },
-      { id: 'smart_reply', kind: 'openai-compatible', label: 'Smart Answer' },
-      { id: 'voice_live', kind: 'gemini-native', label: 'Live Voice' },
-      { id: 'voice_translate', kind: 'gemini-native', label: 'Live Voice Translation' },
-      { id: 'stt', kind: 'gemini-native', label: 'Speech Recognition' },
-      { id: 'tts', kind: 'gemini-native', label: 'Listen / TTS' }
-    ],
+    tasks: TASK_DEFINITIONS,
     storageFile: CONFIG_FILE
   };
 }
+
+// ---------------------------------------------------------------------------
+// Provider Management
+// ---------------------------------------------------------------------------
 
 export async function upsertRuntimeProvider(input: {
   id?: string;
@@ -406,12 +641,13 @@ export async function upsertRuntimeProvider(input: {
   apiUrl?: string;
   apiKey?: string;
   enabled?: boolean;
+  notes?: string;
 }): Promise<string> {
   if (!input.name.trim()) throw new Error('Provider name is required.');
 
   if (input.kind === 'openai-compatible') {
     if (!input.apiUrl?.trim()) {
-      throw new Error('OpenAI-compatible providers need a Chat Completions URL.');
+      throw new Error('OpenAI-compatible providers need an API URL.');
     }
     new URL(input.apiUrl);
   }
@@ -429,16 +665,17 @@ export async function upsertRuntimeProvider(input: {
     id: existing?.id ?? randomUUID(),
     name: input.name.trim(),
     kind: input.kind,
-    apiUrl: input.kind === 'openai-compatible' ? input.apiUrl?.trim() : undefined,
+    apiUrl: input.apiUrl?.trim() || undefined,
     encryptedApiKey: apiKey ? encryptSecret(apiKey) : existing!.encryptedApiKey,
     apiKeyHint: apiKey ? `••••${apiKey.slice(-4)}` : existing!.apiKeyHint,
     enabled: input.enabled ?? existing?.enabled ?? true,
+    notes: input.notes?.trim() || existing?.notes,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now
   };
 
   const providers = existing
-    ? config.providers.map((item) => item.id === provider.id ? provider : item)
+    ? config.providers.map((item) => (item.id === provider.id ? provider : item))
     : [...config.providers, provider];
 
   await persist({ ...config, providers, updatedAt: now });
@@ -453,84 +690,253 @@ export async function deleteRuntimeProvider(id: string): Promise<void> {
   const config = await load();
   const routes = { ...config.routes };
   for (const [task, route] of Object.entries(routes)) {
-    if (route?.providerId === id) delete routes[task as RuntimeTask];
+    if (route?.providerId === id || route?.fallbackProviderId === id) {
+      delete routes[task as RuntimeTask];
+    }
   }
+
+  const models = config.models.filter((model) => model.providerId !== id);
 
   await persist({
     ...config,
     providers: config.providers.filter((provider) => provider.id !== id),
+    models,
     routes,
     updatedAt: new Date().toISOString()
   });
 }
 
+// ---------------------------------------------------------------------------
+// Model Registry Management
+// ---------------------------------------------------------------------------
+
+export async function upsertRuntimeModel(input: {
+  id: string;
+  providerId: string;
+  label: string;
+  capabilities: RuntimeTask[];
+  enabled?: boolean;
+  priority?: number;
+  taskAssignments?: RuntimeTask[];
+  notes?: string;
+}): Promise<string> {
+  if (!input.id.trim()) throw new Error('Model ID is required.');
+  if (!input.label.trim()) throw new Error('Model label is required.');
+  if (!input.providerId.trim()) throw new Error('Provider ID is required.');
+  if (!input.capabilities || input.capabilities.length === 0) {
+    throw new Error('Select at least one capability for this model.');
+  }
+
+  const config = await load();
+  const now = new Date().toISOString();
+
+  // Validate provider exists or is built-in
+  if (input.providerId !== 'env-text' && input.providerId !== 'env-gemini') {
+    const provider = config.providers.find((p) => p.id === input.providerId);
+    if (!provider) throw new Error('Selected provider does not exist.');
+
+    // Validate that capabilities match provider kind
+    for (const cap of input.capabilities) {
+      if (!validateTaskCapability(provider.kind, cap)) {
+        throw new Error(`Capability '${cap}' is not supported by provider kind '${provider.kind}'.`);
+      }
+    }
+  }
+
+  const existingIdx = config.models.findIndex(
+    (m) => m.id === input.id && m.providerId === input.providerId
+  );
+
+  const modelEntry: ModelRegistration = {
+    id: input.id.trim(),
+    providerId: input.providerId.trim(),
+    label: input.label.trim(),
+    capabilities: [...new Set(input.capabilities)],
+    enabled: input.enabled !== false,
+    priority: input.priority ?? 50,
+    taskAssignments: input.taskAssignments,
+    notes: input.notes?.trim(),
+    createdAt: existingIdx >= 0 && config.models[existingIdx] ? config.models[existingIdx].createdAt : now,
+    updatedAt: now
+  };
+
+  const models = [...config.models];
+  if (existingIdx >= 0) {
+    models[existingIdx] = modelEntry;
+  } else {
+    models.push(modelEntry);
+  }
+
+  await persist({ ...config, models, updatedAt: now });
+  return modelEntry.id;
+}
+
+export async function deleteRuntimeModel(providerId: string, modelId: string): Promise<void> {
+  const config = await load();
+  const models = config.models.filter(
+    (m) => !(m.providerId === providerId && m.id === modelId)
+  );
+
+  await persist({ ...config, models, updatedAt: new Date().toISOString() });
+}
+
+// ---------------------------------------------------------------------------
+// Route Management
+// ---------------------------------------------------------------------------
+
 export async function setRuntimeRoute(task: RuntimeTask, route: TaskRoute): Promise<void> {
   const config = await load();
-  const tasks: RuntimeTask[] = [
-    'translation',
-    'chat',
-    'ai_tools',
-    'smart_reply',
-    'voice_live',
-    'voice_translate',
-    'stt',
-    'tts'
-  ];
-  if (!tasks.includes(task)) throw new Error(`Unknown AI route '${task}'.`);
+  if (!ALL_TASKS.includes(task)) throw new Error(`Unknown AI route '${task}'.`);
 
-  const expectedKind: ProviderKind = TEXT_TASKS.has(task as TextTask)
-    ? 'openai-compatible'
-    : 'gemini-native';
-
-  if (route.providerId === 'env-text' && expectedKind !== 'openai-compatible') {
-    throw new Error('This task needs a Gemini-native provider.');
-  }
-  if (route.providerId === 'env-gemini' && expectedKind !== 'gemini-native') {
-    throw new Error('This task needs a text provider.');
-  }
-
-  if (!['env-text', 'env-gemini'].includes(route.providerId)) {
+  // Provider kind resolution & capability check
+  let kind: ProviderKind;
+  if (route.providerId === 'env-gemini') {
+    kind = 'gemini-native';
+  } else if (route.providerId === 'env-text') {
+    kind = isGoogleGeminiUrl(env.AI_API_URL) ? 'gemini-native' : 'openai-compatible';
+  } else {
     const provider = providerById(config, route.providerId);
     if (!provider) throw new Error('Selected provider is missing or disabled.');
-    if (provider.kind !== expectedKind) {
-      throw new Error(`Task '${task}' requires provider kind '${expectedKind}'.`);
+    kind = provider.kind;
+  }
+
+  if (!validateTaskCapability(kind, task)) {
+    throw new Error(`Task '${task}' is not supported by provider kind '${kind}'.`);
+  }
+
+  // If fallback provider is specified, validate it too
+  if (route.fallbackProviderId) {
+    let fbKind: ProviderKind;
+    if (route.fallbackProviderId === 'env-gemini') {
+      fbKind = 'gemini-native';
+    } else if (route.fallbackProviderId === 'env-text') {
+      fbKind = isGoogleGeminiUrl(env.AI_API_URL) ? 'gemini-native' : 'openai-compatible';
+    } else {
+      const fbProvider = providerById(config, route.fallbackProviderId);
+      if (!fbProvider) throw new Error('Selected fallback provider is missing or disabled.');
+      fbKind = fbProvider.kind;
+    }
+
+    if (!validateTaskCapability(fbKind, task)) {
+      throw new Error(`Task '${task}' is not supported by fallback provider kind '${fbKind}'.`);
     }
   }
 
   const builtIn = route.providerId === 'env-text' || route.providerId === 'env-gemini';
   const model = builtIn
-    ? managedChain(task)
+    ? (route.model?.trim() ? normalizeChain(route.model) : managedChain(task))
     : normalizeChain(route.model || managedChain(task));
 
   await persist({
     ...config,
     routes: {
       ...config.routes,
-      [task]: { providerId: route.providerId, model }
+      [task]: {
+        providerId: route.providerId,
+        model,
+        fallbackProviderId: route.fallbackProviderId?.trim() || undefined,
+        fallbackModel: route.fallbackModel ? normalizeChain(route.fallbackModel) : undefined
+      }
     },
     updatedAt: new Date().toISOString()
   });
 }
 
-export async function setVoiceRuntimeSettings(input: Partial<VoiceRuntimeSettings>): Promise<void> {
+// ---------------------------------------------------------------------------
+// Route Resolvers for Execution Engines
+// ---------------------------------------------------------------------------
+
+export type ResolvedTaskRoute = {
+  transport: ProviderKind;
+  apiUrl?: string;
+  apiKey: string;
+  model: string;
+  providerName: string;
+  fallback?: {
+    transport: ProviderKind;
+    apiUrl?: string;
+    apiKey: string;
+    model: string;
+    providerName: string;
+  };
+};
+
+function resolveCredentials(
+  config: RuntimeConfigFile,
+  providerId: string,
+  task: RuntimeTask
+): { transport: ProviderKind; apiUrl?: string; apiKey: string; providerName: string } {
+  if (providerId === 'env-text') {
+    if (!env.AI_API_KEY) throw new Error(`Text AI route '${task}' is not configured.`);
+    const googleNative = isGoogleGeminiUrl(env.AI_API_URL);
+    return {
+      transport: googleNative ? 'gemini-native' : 'openai-compatible',
+      apiUrl: googleNative ? undefined : env.AI_API_URL,
+      apiKey: env.AI_API_KEY,
+      providerName: googleNative ? 'Environment Gemini Text' : 'Environment Text AI'
+    };
+  }
+
+  if (providerId === 'env-gemini') {
+    const apiKey =
+      task === 'voice_live' || task === 'voice_translate'
+        ? env.GEMINI_LIVE_API_KEY ?? env.AI_API_KEY
+        : task === 'stt'
+          ? env.GEMINI_STT_API_KEY ?? env.GEMINI_TTS_API_KEY ?? env.GEMINI_LIVE_API_KEY ?? env.AI_API_KEY
+          : task === 'tts'
+            ? env.GEMINI_TTS_API_KEY ?? env.GEMINI_LIVE_API_KEY ?? env.AI_API_KEY
+            : env.AI_API_KEY ?? env.GEMINI_LIVE_API_KEY;
+
+    if (!apiKey) throw new Error(`Gemini route '${task}' is not configured in environment.`);
+    return {
+      transport: 'gemini-native',
+      apiKey,
+      providerName: 'Environment Gemini'
+    };
+  }
+
+  const provider = providerById(config, providerId);
+  if (!provider) throw new Error(`Provider '${providerId}' for '${task}' is unavailable or disabled.`);
+
+  return {
+    transport: provider.kind,
+    apiUrl: provider.apiUrl,
+    apiKey: decryptSecret(provider.encryptedApiKey),
+    providerName: provider.name
+  };
+}
+
+export async function getResolvedTaskRoute(task: RuntimeTask): Promise<ResolvedTaskRoute> {
   const config = await load();
-  const voice = { ...config.voice, ...input };
+  const saved = config.routes[task];
+  const providerId = saved?.providerId ?? fallbackProvider(task);
 
-  if (
-    voice.silenceMs !== undefined &&
-    (voice.silenceMs < 200 || voice.silenceMs > 5000)
-  ) {
-    throw new Error('Voice silence must be between 200ms and 5000ms.');
+  const creds = resolveCredentials(config, providerId, task);
+  const model = saved?.model
+    ? normalizeChain(saved.model)
+    : managedChain(task);
+
+  let fallback: ResolvedTaskRoute['fallback'] = undefined;
+  if (saved?.fallbackProviderId) {
+    try {
+      const fbCreds = resolveCredentials(config, saved.fallbackProviderId, task);
+      const fbModel = saved.fallbackModel
+        ? normalizeChain(saved.fallbackModel)
+        : managedChain(task);
+      fallback = {
+        ...fbCreds,
+        model: fbModel
+      };
+    } catch (err) {
+      console.warn(`Could not resolve fallback route for ${task}:`, err);
+    }
   }
 
-  if (
-    voice.speakerAccess !== undefined &&
-    !['everyone', 'owner-only'].includes(voice.speakerAccess)
-  ) {
-    throw new Error('Voice speaker access must be everyone or owner-only.');
-  }
-
-  await persist({ ...config, voice, updatedAt: new Date().toISOString() });
+  return {
+    ...creds,
+    model,
+    fallback
+  };
 }
 
 export async function getTextTaskRoute(task: TextTask): Promise<{
@@ -540,39 +946,13 @@ export async function getTextTaskRoute(task: TextTask): Promise<{
   model: string;
   providerName: string;
 }> {
-  const config = await load();
-  const saved = config.routes[task];
-  const providerId = saved?.providerId ?? 'env-text';
-
-  if (providerId === 'env-text') {
-    if (!env.AI_API_KEY) throw new Error(`Text AI route '${task}' is not configured.`);
-
-    const googleNative = isGoogleGeminiUrl(env.AI_API_URL);
-    if (!googleNative && !env.AI_API_URL) {
-      throw new Error(`Text AI route '${task}' needs AI_API_URL or a Gemini Google endpoint.`);
-    }
-
-    return {
-      transport: googleNative ? 'gemini-native' : 'openai-compatible',
-      apiUrl: googleNative ? undefined : env.AI_API_URL,
-      apiKey: env.AI_API_KEY,
-      model: googleNative ? managedChain(task) : normalizeChain(saved?.model || env.AI_MODEL || managedChain(task)),
-      providerName: googleNative ? 'Environment Gemini Text' : 'Environment Text AI'
-    };
-  }
-
-  const provider = providerById(config, providerId);
-  if (!provider || provider.kind !== 'openai-compatible' || !provider.apiUrl) {
-    throw new Error(`Text AI provider for '${task}' is unavailable.`);
-  }
-
-  const googleNative = isGoogleGeminiUrl(provider.apiUrl);
+  const resolved = await getResolvedTaskRoute(task);
   return {
-    transport: googleNative ? 'gemini-native' : 'openai-compatible',
-    apiUrl: googleNative ? undefined : provider.apiUrl,
-    apiKey: decryptSecret(provider.encryptedApiKey),
-    model: googleNative ? managedChain(task) : normalizeChain(saved?.model || managedChain(task)),
-    providerName: provider.name
+    transport: resolved.transport,
+    apiUrl: resolved.apiUrl,
+    apiKey: resolved.apiKey,
+    model: resolved.model,
+    providerName: resolved.providerName
   };
 }
 
@@ -581,37 +961,35 @@ export async function getGeminiTaskRoute(task: GeminiTask): Promise<{
   model: string;
   providerName: string;
 }> {
-  const config = await load();
-  const saved = config.routes[task];
-  const providerId = saved?.providerId ?? 'env-gemini';
-
-  if (providerId === 'env-gemini') {
-    const apiKey =
-      task === 'voice_live' || task === 'voice_translate'
-        ? env.GEMINI_LIVE_API_KEY ?? env.AI_API_KEY
-        : task === 'stt'
-          ? env.GEMINI_STT_API_KEY ?? env.GEMINI_TTS_API_KEY ?? env.GEMINI_LIVE_API_KEY ?? env.AI_API_KEY
-          : env.GEMINI_TTS_API_KEY ?? env.GEMINI_LIVE_API_KEY ?? env.AI_API_KEY;
-
-    if (!apiKey) throw new Error(`Gemini route '${task}' is not configured.`);
-
-    return {
-      apiKey,
-      model: managedChain(task),
-      providerName: 'Environment Gemini'
-    };
-  }
-
-  const provider = providerById(config, providerId);
-  if (!provider || provider.kind !== 'gemini-native') {
-    throw new Error(`Gemini provider for '${task}' is unavailable.`);
-  }
-
+  const resolved = await getResolvedTaskRoute(task);
   return {
-    apiKey: decryptSecret(provider.encryptedApiKey),
-    model: normalizeChain(saved?.model || managedChain(task)),
-    providerName: provider.name
+    apiKey: resolved.apiKey,
+    model: resolved.model,
+    providerName: resolved.providerName
   };
+}
+
+export async function getMediaTaskRoute(task: MediaTask): Promise<ResolvedTaskRoute> {
+  return getResolvedTaskRoute(task);
+}
+
+// ---------------------------------------------------------------------------
+// Voice & Display Settings
+// ---------------------------------------------------------------------------
+
+export async function setVoiceRuntimeSettings(input: Partial<VoiceRuntimeSettings>): Promise<void> {
+  const config = await load();
+  const voice = { ...config.voice, ...input };
+
+  if (voice.silenceMs !== undefined && (voice.silenceMs < 200 || voice.silenceMs > 5000)) {
+    throw new Error('Voice silence must be between 200ms and 5000ms.');
+  }
+
+  if (voice.speakerAccess !== undefined && !['everyone', 'owner-only'].includes(voice.speakerAccess)) {
+    throw new Error('Voice speaker access must be everyone or owner-only.');
+  }
+
+  await persist({ ...config, voice, updatedAt: new Date().toISOString() });
 }
 
 export async function getVoiceRuntimeSettings(): Promise<VoiceRuntimeSettings> {
