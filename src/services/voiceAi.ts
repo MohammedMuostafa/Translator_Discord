@@ -41,6 +41,15 @@ import { runWithUsageUser } from './usageContext.js';
 import { getUserPersonalization } from './userPersonalization.js';
 import { translateText } from '../providers/translator.js';
 import {
+  generateImageForUser,
+  generateVideoForUser,
+  type MediaAspectRatio
+} from './mediaGeneration.js';
+import {
+  type ImageQuality,
+  type VideoQuality
+} from './modelCatalog.js';
+import {
   adjustGuildMusicVolume,
   enqueueMusic as enqueueGuildMusic,
   getGuildMusicVolume,
@@ -1644,11 +1653,51 @@ function toolStringArg(
     : undefined;
 }
 
-async function handleLiveMusicToolCalls(
+async function sendVoiceMediaResult(
+  session: VoiceAiSession,
+  userId: string,
+  media: { filename: string; contentType: string; data: Uint8Array },
+  caption: string
+): Promise<void> {
+  const personal = await getUserPersonalization(userId);
+  const dest = personal.resultDestination || 'channel';
+  const client = getGatewayClient();
+  let channelSent = false;
+
+  if (dest === 'channel' || dest === 'both') {
+    try {
+      const channel = await client.channels.fetch(session.channelId);
+      if (channel && channel.isSendable()) {
+        await channel.send({
+          content: caption.slice(0, 1900),
+          files: [{ attachment: Buffer.from(media.data), name: media.filename }]
+        });
+        channelSent = true;
+      }
+    } catch (err) {
+      console.warn('Could not post media to voice channel, falling back to DM:', err);
+    }
+  }
+
+  if (dest === 'dm' || dest === 'both' || (!channelSent && dest === 'channel')) {
+    try {
+      const user = await client.users.fetch(userId);
+      await user.send({
+        content: caption.slice(0, 1900),
+        files: [{ attachment: Buffer.from(media.data), name: media.filename }]
+      });
+    } catch (dmErr) {
+      console.error('Could not send media via DM:', dmErr);
+    }
+  }
+}
+
+async function handleLiveToolCalls(
   session: VoiceAiSession,
   calls: LiveFunctionCall[]
 ): Promise<void> {
   const speakerId = session.lastSpeakerId ?? session.userId;
+  const personal = await getUserPersonalization(speakerId);
   const responses: Array<{
     id?: string;
     name: string;
@@ -1674,7 +1723,8 @@ async function handleLiveMusicToolCalls(
           response: {
             ok: true,
             title: result.track.title,
-            playing: true
+            playing: true,
+            message: `Playing ${result.track.title}`
           }
         });
         continue;
@@ -1705,15 +1755,185 @@ async function handleLiveMusicToolCalls(
         continue;
       }
 
+      if (name === 'set_music_volume') {
+        const level = Number(call.args?.level ?? 100);
+        const setLevel = setGuildMusicVolume(session.guildId, level);
+        responses.push({
+          id: call.id,
+          name,
+          response: { ok: true, volume: setLevel, message: `Volume set to ${setLevel}%` }
+        });
+        continue;
+      }
+
+      if (name === 'adjust_music_volume') {
+        const delta = Number(call.args?.delta ?? 10);
+        const newLevel = adjustGuildMusicVolume(session.guildId, delta);
+        responses.push({
+          id: call.id,
+          name,
+          response: { ok: true, volume: newLevel, message: `Volume adjusted to ${newLevel}%` }
+        });
+        continue;
+      }
+
+      if (name === 'get_music_status') {
+        const q = guildMusicQueue(session.guildId);
+        responses.push({
+          id: call.id,
+          name,
+          response: {
+            ok: true,
+            playing: q.active,
+            paused: q.paused,
+            volume: q.volume,
+            currentTrack: q.current?.title || 'None'
+          }
+        });
+        continue;
+      }
+
+      if (name === 'get_music_queue') {
+        const q = guildMusicQueue(session.guildId);
+        responses.push({
+          id: call.id,
+          name,
+          response: {
+            ok: true,
+            current: q.current?.title || 'None',
+            queuedTracks: q.queued.map((t) => t.title).slice(0, 5)
+          }
+        });
+        continue;
+      }
+
+      if (name === 'start_live_translation') {
+        const langA = toolStringArg(call, 'language_a') || 'en';
+        const langB = toolStringArg(call, 'language_b') || personal.myLanguage || 'ar-eg';
+        const output = (toolStringArg(call, 'output') || 'both') as TranslationOutput;
+        const quality = (toolStringArg(call, 'quality') || 'balanced') as TranslationQuality;
+
+        await startVoiceTranslation(session.guildId, speakerId, {
+          languageA: langA,
+          languageB: langB,
+          output,
+          quality
+        });
+        responses.push({
+          id: call.id,
+          name,
+          response: { ok: true, message: `Live translation started between ${langA} and ${langB}` }
+        });
+        continue;
+      }
+
+      if (name === 'stop_live_translation') {
+        await stopVoiceTranslation(session.guildId, speakerId);
+        responses.push({
+          id: call.id,
+          name,
+          response: { ok: true, message: 'Live translation stopped. Returned to voice AI chat.' }
+        });
+        continue;
+      }
+
+      if (name === 'generate_image') {
+        const prompt = toolStringArg(call, 'prompt');
+        if (!prompt) throw new Error('Prompt is required.');
+        const quality = (toolStringArg(call, 'quality') || personal.imageQuality || 'standard') as ImageQuality;
+        const aspect = (toolStringArg(call, 'aspect_ratio') || personal.defaultImageAspect || '1:1') as MediaAspectRatio;
+
+        const media = await generateImageForUser(speakerId, prompt, quality, aspect);
+        await sendVoiceMediaResult(
+          session,
+          speakerId,
+          media,
+          `🖼️ **Generated Image**\n**Prompt:** ${prompt}\n**Quality:** ${quality} • **Aspect:** ${aspect}`
+        );
+        responses.push({
+          id: call.id,
+          name,
+          response: { ok: true, message: 'Image generated and delivered to Discord successfully.' }
+        });
+        continue;
+      }
+
+      if (name === 'generate_video') {
+        const prompt = toolStringArg(call, 'prompt');
+        if (!prompt) throw new Error('Prompt is required.');
+        const quality = (toolStringArg(call, 'quality') || personal.videoQuality || 'fast') as VideoQuality;
+        const aspect = (toolStringArg(call, 'aspect_ratio') || personal.defaultVideoAspect || '16:9') as any;
+
+        const media = await generateVideoForUser(speakerId, prompt, quality, aspect);
+        await sendVoiceMediaResult(
+          session,
+          speakerId,
+          media,
+          `🎬 **Generated Video**\n**Prompt:** ${prompt}\n**Quality:** ${quality} • **Aspect:** ${aspect}`
+        );
+        responses.push({
+          id: call.id,
+          name,
+          response: { ok: true, message: 'Video rendered and delivered to Discord successfully.' }
+        });
+        continue;
+      }
+
+      if (name === 'translate_text') {
+        const text = toolStringArg(call, 'text');
+        if (!text) throw new Error('Text to translate is required.');
+        const target = toolStringArg(call, 'target_language') || personal.myLanguage || 'ar-eg';
+        const translated = await translateText(text, target, {
+          provider: personal.translationProvider || 'default',
+          style: personal.translationStyle || 'natural'
+        });
+        responses.push({
+          id: call.id,
+          name,
+          response: {
+            ok: true,
+            translatedText: translated.text,
+            targetLanguage: target,
+            sourceLanguage: translated.detectedSourceLanguage || 'auto'
+          }
+        });
+        continue;
+      }
+
+      if (name === 'write_to_chat') {
+        const text = toolStringArg(call, 'text');
+        if (text) {
+          await postToVoiceTextChannel(session, text);
+          responses.push({ id: call.id, name, response: { ok: true, message: 'Posted to chat.' } });
+          continue;
+        }
+      }
+
+      if (name === 'get_usage_status') {
+        const summary = await userUsageSummary(speakerId);
+        responses.push({
+          id: call.id,
+          name,
+          response: {
+            ok: true,
+            used: summary.used,
+            remaining: summary.remaining,
+            allowance: summary.allowance,
+            plan: summary.plan.name
+          }
+        });
+        continue;
+      }
+
       responses.push({
         id: call.id,
         name: name || 'unknown_tool',
-        response: { ok: false, error: 'Unknown music tool.' }
+        response: { ok: false, error: 'Unknown tool.' }
       });
     } catch (error) {
       responses.push({
         id: call.id,
-        name: name || 'music_tool',
+        name: name || 'tool_call',
         response: {
           ok: false,
           error: errorMessage(error)
@@ -1726,7 +1946,7 @@ async function handleLiveMusicToolCalls(
     try {
       session.live?.sendToolResponse({ functionResponses: responses });
     } catch (error) {
-      console.error('Gemini Live music tool response failed:', error);
+      console.error('Gemini Live tool response failed:', error);
     }
   }
 }
@@ -1739,11 +1959,11 @@ function handleLiveMessage(session: VoiceAiSession, message: LiveServerMessage):
   ).toolCall;
 
   if (toolCall?.functionCalls?.length) {
-    void handleLiveMusicToolCalls(
+    void handleLiveToolCalls(
       session,
       toolCall.functionCalls
     ).catch((error) => {
-      console.error('Gemini Live music tool call failed:', error);
+      console.error('Gemini Live tool call failed:', error);
     });
   }
 
@@ -2270,6 +2490,161 @@ async function openGeminiLiveModel(
             name: 'stop_music',
             description: 'Stop music playback and clear the queue.',
             parametersJsonSchema: { type: 'object', properties: {} }
+          },
+          {
+            name: 'set_music_volume',
+            description: 'Set music playback volume to a percentage between 0 and 200%.',
+            parametersJsonSchema: {
+              type: 'object',
+              properties: {
+                level: {
+                  type: 'number',
+                  description: 'Volume percentage level from 0 to 200 (e.g. 70, 100, 150).'
+                }
+              },
+              required: ['level']
+            }
+          },
+          {
+            name: 'adjust_music_volume',
+            description: 'Increase or decrease music playback volume by a delta percentage (e.g. +10, -10).',
+            parametersJsonSchema: {
+              type: 'object',
+              properties: {
+                delta: {
+                  type: 'number',
+                  description: 'Volume delta percentage (e.g. 10 to increase, -10 to decrease).'
+                }
+              },
+              required: ['delta']
+            }
+          },
+          {
+            name: 'get_music_status',
+            description: 'Get what song is currently playing, paused state, and volume level.',
+            parametersJsonSchema: { type: 'object', properties: {} }
+          },
+          {
+            name: 'get_music_queue',
+            description: 'Get the list of upcoming songs in the queue.',
+            parametersJsonSchema: { type: 'object', properties: {} }
+          },
+          {
+            name: 'start_live_translation',
+            description: 'Start two-way real-time voice translation between two languages in the channel.',
+            parametersJsonSchema: {
+              type: 'object',
+              properties: {
+                language_a: {
+                  type: 'string',
+                  description: 'First language code or name (e.g. en, English, ar, Arabic, ar-eg).'
+                },
+                language_b: {
+                  type: 'string',
+                  description: 'Second language code or name (e.g. ar-eg, Egyptian Arabic, fa, Persian).'
+                },
+                output: {
+                  type: 'string',
+                  enum: ['voice', 'captions', 'both'],
+                  description: 'Output mode: voice, captions, or both.'
+                },
+                quality: {
+                  type: 'string',
+                  enum: ['fast', 'balanced', 'accurate'],
+                  description: 'Translation quality preset.'
+                }
+              },
+              required: ['language_a', 'language_b']
+            }
+          },
+          {
+            name: 'stop_live_translation',
+            description: 'Stop live voice translation and return to standard AI voice chat mode.',
+            parametersJsonSchema: { type: 'object', properties: {} }
+          },
+          {
+            name: 'generate_image',
+            description: 'Generate an AI image from a natural text prompt and deliver it to Discord.',
+            parametersJsonSchema: {
+              type: 'object',
+              properties: {
+                prompt: {
+                  type: 'string',
+                  description: 'Visual description of the image to generate.'
+                },
+                quality: {
+                  type: 'string',
+                  enum: ['draft', 'standard', 'premium'],
+                  description: 'Quality preset.'
+                },
+                aspect_ratio: {
+                  type: 'string',
+                  description: 'Aspect ratio (e.g. 1:1, 16:9, 9:16, 3:2, 4:3).'
+                }
+              },
+              required: ['prompt']
+            }
+          },
+          {
+            name: 'generate_video',
+            description: 'Generate an AI short video clip from a text prompt and deliver it to Discord.',
+            parametersJsonSchema: {
+              type: 'object',
+              properties: {
+                prompt: {
+                  type: 'string',
+                  description: 'Cinematic motion description of the video.'
+                },
+                quality: {
+                  type: 'string',
+                  enum: ['lite', 'fast', 'cinematic'],
+                  description: 'Video quality preset.'
+                },
+                aspect_ratio: {
+                  type: 'string',
+                  enum: ['16:9', '9:16'],
+                  description: 'Aspect ratio: 16:9 or 9:16.'
+                }
+              },
+              required: ['prompt']
+            }
+          },
+          {
+            name: 'translate_text',
+            description: 'Translate a sentence or message to a target language.',
+            parametersJsonSchema: {
+              type: 'object',
+              properties: {
+                text: {
+                  type: 'string',
+                  description: 'Text to translate.'
+                },
+                target_language: {
+                  type: 'string',
+                  description: 'Target language code or name (e.g. ar-eg, en, fr).'
+                }
+              },
+              required: ['text']
+            }
+          },
+          {
+            name: 'write_to_chat',
+            description: 'Write or post a text message directly into the voice text channel chat.',
+            parametersJsonSchema: {
+              type: 'object',
+              properties: {
+                text: {
+                  type: 'string',
+                  description: 'The text message to post in the channel.'
+                }
+              },
+              required: ['text']
+            }
+          },
+          {
+            name: 'get_usage_status',
+            description: 'Get the current user account credit balance, monthly usage, and plan.',
+            parametersJsonSchema: { type: 'object', properties: {} }
           }
         ]
       }],
@@ -2309,6 +2684,47 @@ async function openGeminiLiveModel(
   return live;
 }
 
+async function switchConversationToCascade(
+  session: VoiceAiSession,
+  reason: string
+): Promise<void> {
+  if (session.engine === 'cascade') return;
+
+  console.warn(`Switching conversation to cascade fallback in guild ${session.guildId}: ${reason}`);
+  session.engine = 'cascade';
+  session.liveReconnecting = false;
+  session.busy = false;
+  stopPlayback(session);
+
+  try { session.live?.close(); } catch { /* no-op */ }
+  session.live = undefined;
+
+  attachCascadeReceiver(session);
+
+  const isArabic = /\p{Script=Arabic}/u.test(session.language);
+  const notice = isArabic
+    ? 'خدمة الصوت المباشر غير متوفرة مؤقتاً. تم تحويل TD إلى الصوت القياسي تلقائياً.'
+    : 'Live Voice is temporarily unavailable. TD switched to Standard Voice automatically.';
+
+  try {
+    if (geminiTtsConfigured()) {
+      await playGeneratedSpeech(
+        session,
+        notice,
+        inferSpeechLanguage(notice, session.language),
+        session.userId
+      );
+    }
+  } catch {
+    // If TTS fails during switch notice, notify via DM or text
+  }
+
+  void notifyUser(
+    session.userId,
+    `⚠️ **TD AI Voice:** ${notice}\nDetails: ${reason}`
+  );
+}
+
 async function failoverGeminiLive(
   session: VoiceAiSession,
   failedModel: string,
@@ -2330,9 +2746,9 @@ async function failoverGeminiLive(
   );
 
   if (currentIndex + 1 >= models.length) {
-    await notifyUser(
-      session.userId,
-      `❌ **TD AI Live Voice:** ${reason} No Live Voice fallback model is left for this session.`
+    await switchConversationToCascade(
+      session,
+      `All configured Live Voice models failed (${reason}).`
     );
     return;
   }
@@ -2367,9 +2783,9 @@ async function failoverGeminiLive(
       }
     }
 
-    await notifyUser(
-      session.userId,
-      `❌ **TD AI Live Voice:** all fallback models are unavailable. ${errors.slice(-2).join(' | ')}`
+    await switchConversationToCascade(
+      session,
+      `All Live Voice fallback models were unavailable. ${errors.slice(-2).join(' | ')}`
     );
   } finally {
     session.liveReconnecting = false;
@@ -2398,7 +2814,11 @@ async function connectGeminiLive(session: VoiceAiSession): Promise<void> {
     }
   }
 
-  throw new Error(`All Live Voice models are unavailable. ${errors.slice(-2).join(' | ')}`);
+  // If initial Live connection completely fails, fall back to cascade automatically
+  await switchConversationToCascade(
+    session,
+    `Initial Live connection failed: ${errors.slice(-2).join(' | ')}`
+  );
 }
 
 async function processMusicControlUtterance(
@@ -2704,8 +3124,7 @@ async function createSession(
   try {
     if (engine === 'live') {
       await connectGeminiLive(session);
-      // Conversation is always-listening; no wake phrase is required.
-      attachLiveReceiver(session);
+      attachWakeGatedLiveReceiver(session);
     } else if (engine === 'translate-live') {
       try {
         await connectGeminiLiveTranslation(session);

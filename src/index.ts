@@ -29,7 +29,7 @@ import {
   handleSmartReplyEditModal,
   handleSmartReplyEditSubmit
 } from './aiActionHandlers.js';
-import { handleVoiceChatCommand } from './voiceHandlers.js';
+import { handleJoinCommand, handleLeaveCommand } from './voiceHandlers.js';
 import { handleImageCommand, handleVideoCommand } from './mediaHandlers.js';
 import { handleMusicButton, handleMusicCommand } from './musicHandlers.js';
 import type { DiscordInteraction } from './types.js';
@@ -250,134 +250,25 @@ async function processInteraction(
     return res.status(400).json({ error: 'Unsupported command type.' });
   }
 
-  if (name === 'settings') {
-    try {
-      const payload = await handleSettings(interaction);
-      return res.json({
-        type: InteractionResponseType.ChannelMessageWithSource,
-        data: {
-          ...payload,
-          flags: MessageFlags.Ephemeral
-        }
-      });
-    } catch (error) {
-      return res.json(
-        ephemeralError(
-          error instanceof Error ? error.message : 'Unexpected error.'
-        )
-      );
-    }
-  }
-
-  if (name === 'status') {
-    return res.json({
-      type: InteractionResponseType.ChannelMessageWithSource,
-      data: {
-        ...handleStatus(),
-        flags: MessageFlags.Ephemeral
-      }
-    });
-  }
-
-  if (name === 'help') {
-    return res.json({
-      type: InteractionResponseType.ChannelMessageWithSource,
-      data: {
-        ...handleHelp(),
-        flags: MessageFlags.Ephemeral
-      }
-    });
-  }
-
-  if (name === 'chat') {
+  if (name === 'join') {
     res.json({
       type: InteractionResponseType.DeferredChannelMessageWithSource,
       data: { flags: MessageFlags.Ephemeral }
     });
-    handleChatCommand(interaction);
+    handleJoinCommand(interaction);
     return;
   }
 
-  if (name === 'voicechat') {
+  if (name === 'leave') {
     res.json({
       type: InteractionResponseType.DeferredChannelMessageWithSource,
       data: { flags: MessageFlags.Ephemeral }
     });
-    handleVoiceChatCommand(interaction);
+    handleLeaveCommand(interaction);
     return;
   }
 
-  if (name === 'music') {
-    res.json({
-      type: InteractionResponseType.DeferredChannelMessageWithSource,
-      data: { flags: MessageFlags.Ephemeral }
-    });
-    handleMusicCommand(interaction);
-    return;
-  }
-
-  if (name === 'image') {
-    res.json({
-      type: InteractionResponseType.DeferredChannelMessageWithSource,
-      data: { flags: MessageFlags.Ephemeral }
-    });
-    handleImageCommand(interaction);
-    return;
-  }
-
-  if (name === 'video') {
-    res.json({
-      type: InteractionResponseType.DeferredChannelMessageWithSource,
-      data: { flags: MessageFlags.Ephemeral }
-    });
-    handleVideoCommand(interaction);
-    return;
-  }
-
-  if (name === 'ai') {
-    res.json({
-      type: InteractionResponseType.DeferredChannelMessageWithSource,
-      data: { flags: MessageFlags.Ephemeral }
-    });
-    handleAiSlash(interaction);
-    return;
-  }
-
-  if (name === 'code') {
-    res.json({
-      type: InteractionResponseType.DeferredChannelMessageWithSource,
-      data: { flags: MessageFlags.Ephemeral }
-    });
-    handleCodeSlash(interaction);
-    return;
-  }
-
-  if (name === 'translate') {
-    res.json({
-      type: InteractionResponseType.DeferredChannelMessageWithSource,
-      data: { flags: MessageFlags.Ephemeral }
-    });
-    handleTranslateText(interaction);
-    return;
-  }
-
-  if (name === 'say') {
-    res.json({
-      type: InteractionResponseType.DeferredChannelMessageWithSource,
-      data: { flags: MessageFlags.Ephemeral }
-    });
-    handleSay(interaction);
-    return;
-  }
-
-  if (name === 'voice') {
-    res.json({
-      type: InteractionResponseType.DeferredChannelMessageWithSource,
-      data: { flags: MessageFlags.Ephemeral }
-    });
-    handleVoice(interaction);
-    return;
-  }
+  return res.json(ephemeralError(`The /${name} command is no longer active. Use /join or /leave, or talk naturally to TD AI in DMs or Voice.`));
 
   return res.json(ephemeralError('Unknown command.'));
 }

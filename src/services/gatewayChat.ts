@@ -14,7 +14,11 @@ import {
   type ChatTurn
 } from './aiChat.js';
 import { runWithUsageUser } from './usageContext.js';
-import { assertFeatureAccess } from './billingStore.js';
+import { assertFeatureAccess, recordUsage } from './billingStore.js';
+import { getUserPersonalization } from './userPersonalization.js';
+import { generateImageForUser, generateVideoForUser } from './mediaGeneration.js';
+import { translateText } from '../providers/translator.js';
+import { callTextModel } from './modelRouter.js';
 
 interface ChatSession {
   userId: string;
@@ -97,18 +101,35 @@ async function handleDirectMessage(message: Message): Promise<void> {
   if (message.author.bot || message.channel.type !== ChannelType.DM) return;
 
   const userId = message.author.id;
-  const session = freshSession(userId);
+  const personal = await getUserPersonalization(userId);
 
+  // Lazy-initialize temporary session for natural DM conversation
+  let session = freshSession(userId);
   if (!session) {
+    session = {
+      userId,
+      language: (personal.defaultReplyLanguage || 'auto') as ChatResponseLanguage,
+      history: [],
+      lastActivityAt: Date.now()
+    };
+    sessions.set(userId, session);
+  }
+
+  const content = message.content.trim();
+  const attachment = message.attachments.first();
+
+  // Natural reset commands
+  if (/^(?:ابدأ من جديد|امسح المحادثة|امسح الشات|reset chat|clear chat|reset|ابدأ تاني)$/iu.test(content)) {
+    session.history = [];
+    session.lastActivityAt = Date.now();
     await message.reply({
-      content: '🤖 **TD AI chat is closed.** Use `/chat open` to start a private AI conversation.',
+      content: '🧹 **تم مسح سياق المحادثة وبدء جلسة جديدة بنجاح.**',
       allowedMentions: { parse: [] }
     }).catch(() => undefined);
     return;
   }
 
-  const content = message.content.trim();
-  if (!content) return;
+  if (!content && !attachment) return;
 
   if (content.length > env.CHAT_MAX_INPUT_CHARS) {
     await message.reply({
@@ -118,18 +139,127 @@ async function handleDirectMessage(message: Message): Promise<void> {
     return;
   }
 
-  if (!aiChatConfigured()) {
-    await message.reply({
-      content: '❌ AI chat is not configured on this deployment.',
-      allowedMentions: { parse: [] }
-    }).catch(() => undefined);
-    return;
-  }
-
   session.lastActivityAt = Date.now();
   await message.channel.sendTyping().catch(() => undefined);
 
   try {
+    // 1. Image Editing via attachment
+    if (attachment && attachment.contentType?.startsWith('image/')) {
+      await assertFeatureAccess(userId, 'image_edit');
+      const res = await fetch(attachment.url);
+      if (!res.ok) throw new Error('Could not download image attachment.');
+      const buffer = new Uint8Array(await res.arrayBuffer());
+      const editPrompt = content || 'Enhance and edit this image with high detail';
+
+      const media = await generateImageForUser(
+        userId,
+        editPrompt,
+        personal.imageQuality || 'standard',
+        personal.defaultImageAspect as any || '1:1',
+        { data: buffer, contentType: attachment.contentType }
+      );
+
+      await message.reply({
+        content: `🖼️ **Edited Image**\n**Prompt:** ${editPrompt}`,
+        files: [{ attachment: Buffer.from(media.data), name: media.filename }]
+      });
+      return;
+    }
+
+    // 2. Image Generation intent
+    const imageMatch = content.match(/^(?:اعمل(?:لي)? صورة|صمم(?:لي)? صورة|ولد صورة|ارسم(?:لي)?|generate image|draw|image:)\s*(.+)$/iu);
+    if (imageMatch?.[1]) {
+      await assertFeatureAccess(userId, 'image_generate');
+      const prompt = imageMatch[1].trim();
+      const media = await generateImageForUser(
+        userId,
+        prompt,
+        personal.imageQuality || 'standard',
+        personal.defaultImageAspect as any || '1:1'
+      );
+
+      await message.reply({
+        content: `🖼️ **Generated Image**\n**Prompt:** ${prompt}`,
+        files: [{ attachment: Buffer.from(media.data), name: media.filename }]
+      });
+      return;
+    }
+
+    // 3. Video Generation intent
+    const videoMatch = content.match(/^(?:اعمل(?:لي)? فيديو|صمم(?:لي)? فيديو|ولد فيديو|generate video|video:)\s*(.+)$/iu);
+    if (videoMatch?.[1]) {
+      await assertFeatureAccess(userId, 'video_generate');
+      const prompt = videoMatch[1].trim();
+      const media = await generateVideoForUser(
+        userId,
+        prompt,
+        personal.videoQuality || 'fast',
+        personal.defaultVideoAspect as any || '16:9'
+      );
+
+      await message.reply({
+        content: `🎬 **Generated Video**\n**Prompt:** ${prompt}`,
+        files: [{ attachment: Buffer.from(media.data), name: media.filename }]
+      });
+      return;
+    }
+
+    // 4. Translation intent
+    const translateMatch = content.match(/^(?:ترجم(?:لي)?|translate)\s*(?:ال(?:كلام|نص|جملة)\s*(?:ده|دي|هذا|هذه)?\s*)?(?:لـ?|to\s+)?([a-zA-Z\u0600-\u06FF\s-]*?)?[:：,\-]?\s+([\s\S]+)$/iu);
+    if (translateMatch && translateMatch[2]) {
+      await assertFeatureAccess(userId, 'translation');
+      const explicitLang = translateMatch[1]?.trim();
+      const target = explicitLang && explicitLang.length >= 2
+        ? explicitLang
+        : personal.myLanguage || 'ar-eg';
+      const textToTranslate = translateMatch[2].trim();
+
+      const translated = await translateText(textToTranslate, target, {
+        provider: personal.translationProvider || 'default',
+        style: personal.translationStyle || 'natural'
+      });
+
+      await message.reply({
+        content: `🌐 **Translation (${target}):**\n${translated.text}`,
+        allowedMentions: { parse: [] }
+      });
+      return;
+    }
+
+    // 5. Code request intent
+    const isCode = /^(?:اكتب(?:لي)? كود|اكتبلي كود|اكتبلي دالة|اكتبلي react|اكتبلي سكريبت|write code|code:|function)\b/iu.test(content);
+    if (isCode) {
+      await assertFeatureAccess(userId, 'code');
+      const res = await callTextModel(
+        'code',
+        [
+          { role: 'system', content: 'You are an expert programming assistant. Write clean, production-grade code with explanations in concise Markdown.' },
+          ...session.history,
+          { role: 'user', content }
+        ],
+        { temperature: 0.2, timeoutMs: env.AI_ACTION_TIMEOUT_MS }
+      );
+
+      session.history = trimHistory([
+        ...session.history,
+        { role: 'user', content },
+        { role: 'assistant', content: res.text }
+      ]);
+      session.lastActivityAt = Date.now();
+      await recordUsage(userId, 'code', Math.max(1, Math.ceil(res.text.length / 8)));
+      await sendChunks(message, res.text);
+      return;
+    }
+
+    // 6. General Chat
+    if (!aiChatConfigured()) {
+      await message.reply({
+        content: '❌ AI chat is not configured on this deployment.',
+        allowedMentions: { parse: [] }
+      }).catch(() => undefined);
+      return;
+    }
+
     await assertFeatureAccess(userId, 'chat');
     const reply = await runWithUsageUser(
       userId,
@@ -228,13 +358,11 @@ export async function openAiDmChat(
   const user = await client.users.fetch(userId);
   await user.send({
     content: [
-      '🤖 **TD AI Chat is ready.**',
+      '🤖 **TD AI is ready.**',
       '',
-      'Just type normally in this DM — no slash command is needed for each message.',
-      `Language: **${chatLanguageLabel(language)}**`,
-      `Memory: **temporary session only** (auto-expires after ${env.CHAT_SESSION_TTL_MINUTES} minutes of inactivity).`,
-      '',
-      'Use `/chat reset` to clear the current context or `/chat close` when you are done.'
+      'You can chat, code, generate images, render videos, or translate directly here in DMs.',
+      `Memory: **temporary session** (auto-expires after ${env.CHAT_SESSION_TTL_MINUTES} minutes of inactivity).`,
+      'Say `"ابدأ من جديد"` or `"reset chat"` at any time to clear context.'
     ].join('\n'),
     allowedMentions: { parse: [] }
   });
@@ -248,44 +376,29 @@ export function resetAiDmChat(userId: string): boolean {
   const session = freshSession(userId);
   if (!session) return false;
   session.history = [];
-  session.lastActivityAt = Date.now();
   return true;
 }
 
-export function aiDmChatStatus(userId: string): {
-  active: boolean;
-  language?: ChatResponseLanguage;
-  turns?: number;
-  expiresInMinutes?: number;
-} {
+export function aiDmChatStatus(userId: string): { active: boolean; language?: ChatResponseLanguage; turns?: number; expiresInMinutes?: number } {
   const session = freshSession(userId);
   if (!session) return { active: false };
-
-  const expiresAt = session.lastActivityAt + sessionTtlMs();
-  const expiresInMinutes = Math.max(
-    1,
-    Math.ceil((expiresAt - Date.now()) / 60_000)
-  );
-
+  const elapsedMs = Date.now() - session.lastActivityAt;
+  const remainingMs = Math.max(0, sessionTtlMs() - elapsedMs);
   return {
     active: true,
     language: session.language,
     turns: session.history.length,
-    expiresInMinutes
+    expiresInMinutes: Math.max(1, Math.round(remainingMs / 60_000))
   };
 }
 
 export function chatLanguageLabel(language: ChatResponseLanguage): string {
   switch (language) {
-    case 'ar-eg':
-      return 'Egyptian Arabic';
-    case 'ar-msa':
-      return 'Modern Standard Arabic';
-    case 'en':
-      return 'English';
-    case 'fa':
-      return 'Persian / Farsi';
-    default:
-      return 'Auto — follow my language';
+    case 'ar-eg': return 'Egyptian Arabic (عربي مصري)';
+    case 'ar-msa': return 'Modern Standard Arabic (فصحى)';
+    case 'en': return 'English';
+    case 'fa': return 'Persian (فارسی)';
+    case 'auto':
+    default: return 'Auto match user';
   }
 }

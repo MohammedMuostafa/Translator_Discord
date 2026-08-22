@@ -4,18 +4,43 @@ import { env } from '../config.js';
 
 export type UserHeadingSize = 'small' | 'medium' | 'large';
 export type UserDensity = 'compact' | 'comfortable' | 'relaxed';
+export type ResultDestination = 'channel' | 'dm' | 'both';
+export type TranslationStyle = 'natural' | 'casual' | 'formal' | 'literal';
+export type TranslationProvider = 'default' | 'ai' | 'google' | 'deepl' | 'libretranslate';
+export type ImageQuality = 'draft' | 'standard' | 'premium';
+export type VideoQuality = 'lite' | 'fast' | 'cinematic';
 
 export type UserPersonalization = {
+  // Voice & Wake
+  wakeName: string;
+  followupWindowMs: number;
+  voiceName: string;
+  responseDelayMs: number;
+
+  // Translation & Language
+  myLanguage: string;
+  autoTranslateToMyLanguage: boolean;
+  outgoingLanguage: string;
+  translationStyle: TranslationStyle;
+  translationProvider: TranslationProvider;
+
+  // Assistant & Media
+  resultDestination: ResultDestination;
+  defaultReplyLanguage: string;
+  defaultImageAspect: string;
+  imageQuality: ImageQuality;
+  defaultVideoAspect: string;
+  videoQuality: VideoQuality;
+
+  // Formatting
   headingSize: UserHeadingSize;
   density: UserDensity;
   showEmojis: boolean;
   showOriginal: boolean;
-  voiceName: string;
-  responseDelayMs: number;
 };
 
 type Store = {
-  version: 1;
+  version: 2;
   users: Record<string, UserPersonalization>;
   updatedAt: string;
 };
@@ -37,13 +62,29 @@ export const ALLOWED_VOICES = [
   'Vindemiatrix'
 ] as const;
 
-const defaults: UserPersonalization = {
+export const defaults: UserPersonalization = {
+  wakeName: 'TD',
+  followupWindowMs: 5000,
+  voiceName: 'Kore',
+  responseDelayMs: 250,
+
+  myLanguage: env.DEFAULT_INCOMING_LANGUAGE || 'ar-eg',
+  autoTranslateToMyLanguage: true,
+  outgoingLanguage: env.DEFAULT_OUTGOING_LANGUAGE || 'en',
+  translationStyle: 'natural',
+  translationProvider: 'default',
+
+  resultDestination: 'channel',
+  defaultReplyLanguage: 'auto',
+  defaultImageAspect: '1:1',
+  imageQuality: 'standard',
+  defaultVideoAspect: '16:9',
+  videoQuality: 'fast',
+
   headingSize: 'medium',
   density: 'comfortable',
   showEmojis: true,
-  showOriginal: true,
-  voiceName: 'Kore',
-  responseDelayMs: 250
+  showOriginal: true
 };
 
 function cleanVoice(value: unknown): string {
@@ -64,22 +105,68 @@ function sanitize(input: Partial<UserPersonalization> | undefined): UserPersonal
       ? input.density
       : 'comfortable';
 
+  const resultDestination: ResultDestination =
+    input?.resultDestination === 'dm' || input?.resultDestination === 'both'
+      ? input.resultDestination
+      : 'channel';
+
+  const translationStyle: TranslationStyle =
+    input?.translationStyle && ['natural', 'casual', 'formal', 'literal'].includes(input.translationStyle)
+      ? input.translationStyle
+      : 'natural';
+
+  const translationProvider: TranslationProvider =
+    input?.translationProvider && ['default', 'ai', 'google', 'deepl', 'libretranslate'].includes(input.translationProvider)
+      ? input.translationProvider
+      : 'default';
+
+  const imageQuality: ImageQuality =
+    input?.imageQuality && ['draft', 'standard', 'premium'].includes(input.imageQuality)
+      ? input.imageQuality
+      : 'standard';
+
+  const videoQuality: VideoQuality =
+    input?.videoQuality && ['lite', 'fast', 'cinematic'].includes(input.videoQuality)
+      ? input.videoQuality
+      : 'fast';
+
+  const wakeName = String(input?.wakeName ?? defaults.wakeName).trim() || defaults.wakeName;
+
   return {
-    headingSize,
-    density,
-    showEmojis: input?.showEmojis !== false,
-    showOriginal: input?.showOriginal !== false,
+    wakeName,
+    followupWindowMs: Math.min(
+      30_000,
+      Math.max(1_000, Math.round(Number(input?.followupWindowMs ?? defaults.followupWindowMs)))
+    ),
     voiceName: cleanVoice(input?.voiceName),
     responseDelayMs: Math.min(
       3000,
       Math.max(0, Math.round(Number(input?.responseDelayMs ?? defaults.responseDelayMs)))
-    )
+    ),
+
+    myLanguage: String(input?.myLanguage ?? defaults.myLanguage).trim() || defaults.myLanguage,
+    autoTranslateToMyLanguage: input?.autoTranslateToMyLanguage !== false,
+    outgoingLanguage: String(input?.outgoingLanguage ?? defaults.outgoingLanguage).trim() || defaults.outgoingLanguage,
+    translationStyle,
+    translationProvider,
+
+    resultDestination,
+    defaultReplyLanguage: String(input?.defaultReplyLanguage ?? defaults.defaultReplyLanguage).trim() || defaults.defaultReplyLanguage,
+    defaultImageAspect: String(input?.defaultImageAspect ?? defaults.defaultImageAspect).trim() || defaults.defaultImageAspect,
+    imageQuality,
+    defaultVideoAspect: String(input?.defaultVideoAspect ?? defaults.defaultVideoAspect).trim() || defaults.defaultVideoAspect,
+    videoQuality,
+
+    headingSize,
+    density,
+    showEmojis: input?.showEmojis !== false,
+    showOriginal: input?.showOriginal !== false
   };
 }
 
 function emptyStore(): Store {
   return {
-    version: 1,
+    version: 2,
     users: {},
     updatedAt: new Date().toISOString()
   };
@@ -137,4 +224,3 @@ export async function setUserPersonalization(
   await persist(store);
   return next;
 }
-

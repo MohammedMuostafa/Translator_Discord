@@ -51,6 +51,8 @@ const schema = z.object({
   AI_ACTION_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(180_000).default(60_000),
 
   VOICE_AI_MODEL: optionalString,
+  LAVALINK_URL: optionalUrl,
+  LAVALINK_PASSWORD: optionalString,
 
   CHAT_SESSION_TTL_MINUTES: z.coerce.number().int().min(5).max(1440).default(120),
   CHAT_MAX_HISTORY: z.coerce.number().int().min(2).max(100).default(20),

@@ -468,13 +468,47 @@ function userPage(showAdminButton: boolean): string {
         <p>Higher tiers unlock advanced models, video generation, and higher credit limits.</p>
       </div>
       <div class="card" style="padding:0;background:transparent;border:0;box-shadow:none">
-        <div class="grid" id="planGrid"></div>
-      </div>
-    </div>
-  </section>
-
-  <section id="personalize" class="section">
+        <div c  <section id="personalize" class="section">
     <div class="grid">
+      <div class="card half">
+        <h3>Translation Preferences</h3>
+        <p class="sub">Configure your primary language and one-click translation behavior.</p>
+        <div class="settingsGrid">
+          <div class="field"><label>My Language (Default Incoming)</label><input id="myLanguage" placeholder="ar-eg, en, fr..."/></div>
+          <div class="field"><label>Outgoing Language</label><input id="outgoingLanguage" placeholder="en, ar-eg..."/></div>
+          <div class="field"><label>Translation Style</label><select id="translationStyle"><option value="natural">Natural (Default)</option><option value="casual">Casual / Slang</option><option value="formal">Formal</option><option value="literal">Literal</option></select></div>
+          <div class="field"><label>Translation Provider</label><select id="translationProvider"><option value="default">Default Router</option><option value="ai">AI Model</option><option value="google">Google Translate</option><option value="deepl">DeepL</option><option value="libretranslate">LibreTranslate</option></select></div>
+          <label class="toggle wide"><input id="autoTranslateToMyLanguage" type="checkbox"/> <strong>Auto-translate directly to My Language</strong> (No menu on right-click)</label>
+        </div>
+        <button class="btn primary" id="saveTrans" style="margin-top:14px">Save Translation Preferences</button>
+      </div>
+
+      <div class="card half">
+        <h3>Voice & Wake-Word Agent</h3>
+        <p class="sub">Configure wake name, follow-up window, and voice personality.</p>
+        <div class="settingsGrid">
+          <div class="field"><label>Wake Name</label><input id="wakeName" placeholder="TD"/></div>
+          <div class="field"><label>Follow-up Window (ms)</label><input id="followupWindowMs" type="number" min="1000" max="30000" step="500" placeholder="5000"/></div>
+          <div class="field"><label>Voice</label><select id="voiceName"></select></div>
+          <div class="field"><label>Response Delay (ms)</label><input id="delay" type="number" min="0" max="3000" step="50"/></div>
+        </div>
+        <button class="btn primary" id="saveVoice" style="margin-top:14px">Save Voice Preferences</button>
+      </div>
+
+      <div class="card half">
+        <h3>Assistant & Media Routing</h3>
+        <p class="sub">Choose where generated media and voice responses are delivered.</p>
+        <div class="settingsGrid">
+          <div class="field"><label>Result Destination</label><select id="resultDestination"><option value="channel">Channel (Voice text channel)</option><option value="dm">Direct Message (DM)</option><option value="both">Both (Channel + DM)</option></select></div>
+          <div class="field"><label>Default Reply Language</label><select id="defaultReplyLanguage"><option value="auto">Auto Match User</option><option value="ar-eg">Egyptian Arabic (عربي مصري)</option><option value="ar-msa">Modern Standard Arabic (فصحى)</option><option value="en">English</option><option value="fa">Persian (فارسی)</option></select></div>
+          <div class="field"><label>Default Image Aspect</label><select id="defaultImageAspect"><option value="1:1">1:1 (Square)</option><option value="16:9">16:9 (Landscape)</option><option value="9:16">9:16 (Portrait)</option><option value="3:2">3:2</option><option value="4:3">4:3</option></select></div>
+          <div class="field"><label>Default Image Quality</label><select id="userImageQuality"><option value="standard">Standard</option><option value="draft">Draft</option><option value="premium">Premium</option></select></div>
+          <div class="field"><label>Default Video Aspect</label><select id="defaultVideoAspect"><option value="16:9">16:9 (Landscape)</option><option value="9:16">9:16 (Portrait)</option></select></div>
+          <div class="field"><label>Default Video Quality</label><select id="userVideoQuality"><option value="fast">Fast</option><option value="lite">Lite</option><option value="cinematic">Cinematic</option></select></div>
+        </div>
+        <button class="btn primary" id="saveAssistant" style="margin-top:14px">Save Assistant Preferences</button>
+      </div>
+
       <div class="card half">
         <h3>Formatting & Aesthetics</h3>
         <p class="sub">Personalize how TD formats responses for your user account.</p>
@@ -485,16 +519,6 @@ function userPage(showAdminButton: boolean): string {
           <label class="toggle"><input id="showOriginal" type="checkbox"/> Show Original</label>
         </div>
         <button class="btn primary" id="saveText" style="margin-top:14px">Save Display Preferences</button>
-      </div>
-
-      <div class="card half">
-        <h3>Voice & Audio</h3>
-        <p class="sub">Choose your preferred assistant voice and speed.</p>
-        <div class="settingsGrid">
-          <div class="field"><label>Voice</label><select id="voiceName"></select></div>
-          <div class="field"><label>Response Delay (ms)</label><input id="delay" type="number" min="0" max="2000" step="50"/></div>
-        </div>
-        <button class="btn primary" id="saveVoice" style="margin-top:14px">Save Voice Preferences</button>
       </div>
 
       <div class="card">
@@ -538,21 +562,71 @@ function renderHome(){
   $('#videoQuota').textContent=u.plan.videoGenerate?fmt(u.remainingVideos)+' left this month':'Requires Plus or Pro';
   $('#imgLeft').value=u.plan.imageGenerate?fmt(u.remainingImages):'Upgrade needed';
   $('#vidLeft').value=u.plan.videoGenerate?fmt(u.remainingVideos):'Upgrade needed';
-  $('#usageMix').innerHTML=Object.entries(u.categoryBreakdown).map(([k,v])=>\`
-    <div class="meterRow">
-      <span class="statLabel" style="margin:0">\${esc(k)}</span>
-      <div class="progress"><span style="width:\${Math.min(100,Math.round((v/Math.max(1,u.account.creditsUsed))*100))}%\"></span></div>
-      <span style="font-size:12px;font-weight:700">\${fmt(v)}</span>
-    </div>
-  \`).join('') || '<div class="sub">No usage recorded yet this billing period.</div>';
+  $('#usageMix').innerHTML=Object.entries(u.categoryBreakdown).map(([k,v])=> '<div class="meterRow"><span class="statLabel" style="margin:0">'+esc(k)+'</span><div class="progress"><span style="width:'+Math.min(100,Math.round((v/Math.max(1,u.account.creditsUsed))*100))+'%"></span></div><span style="font-size:12px;font-weight:700">'+fmt(v)+'</span></div>').join('') || '<div class="sub">No usage recorded yet this billing period.</div>';
 }
 
 function renderPlans(){$('#planGrid').innerHTML=plans.map(p=>'<div class="card third" style="padding:0;background:transparent;border:0;box-shadow:none"><div class="planCard '+(p.id==='plus'?'featured':'')+'"><div class="planName">'+esc(p.name)+'</div><div class="planCredits">'+fmt(p.monthlyCredits)+' <small>credits / month</small></div><div class="planFeatures"><div class="planFeature"><span class="yes">✓</span> Voice AI & Chat</div><div class="planFeature"><span class="'+(p.imageGenerate?'yes':'no')+'">'+(p.imageGenerate?'✓':'—')+'</span> '+fmt(p.maxImageJobsPerMonth)+' image generations</div><div class="planFeature"><span class="'+(p.imageEdit?'yes':'no')+'">'+(p.imageEdit?'✓':'—')+'</span> '+fmt(p.maxImageEditJobsPerMonth)+' image edits</div><div class="planFeature"><span class="'+(p.videoGenerate?'yes':'no')+'">'+(p.videoGenerate?'✓':'—')+'</span> '+fmt(p.maxVideoJobsPerMonth)+' videos</div><div class="planFeature"><span class="yes">✓</span> '+(p.id==='pro'?'Premium Tier':'Plan-matched')+' AI Quality</div></div><button class="btn '+(me.usage.account.planId===p.id?'secondary':'primary')+'" style="width:100%;margin-top:8px" disabled>'+(me.usage.account.planId===p.id?'Current plan':'Upgrade coming soon')+'</button></div></div>').join('')}
-function renderPrefs(){const voices=me.voices||[];$('#voiceName').innerHTML=voices.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('');$('#headingSize').value=prefs.headingSize;$('#density').value=prefs.density;$('#showEmojis').checked=prefs.showEmojis;$('#showOriginal').checked=prefs.showOriginal;$('#voiceName').value=prefs.voiceName;$('#delay').value=String(prefs.responseDelayMs);preview()}
+function renderPrefs(){
+  const voices=me.voices||[];
+  $('#voiceName').innerHTML=voices.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('');
+  $('#myLanguage').value=prefs.myLanguage||'ar-eg';
+  $('#outgoingLanguage').value=prefs.outgoingLanguage||'en';
+  $('#translationStyle').value=prefs.translationStyle||'natural';
+  $('#translationProvider').value=prefs.translationProvider||'default';
+  $('#autoTranslateToMyLanguage').checked=prefs.autoTranslateToMyLanguage!==false;
+
+  $('#wakeName').value=prefs.wakeName||'TD';
+  $('#followupWindowMs').value=prefs.followupWindowMs||5000;
+  $('#voiceName').value=prefs.voiceName||'Kore';
+  $('#delay').value=String(prefs.responseDelayMs||250);
+
+  $('#resultDestination').value=prefs.resultDestination||'channel';
+  $('#defaultReplyLanguage').value=prefs.defaultReplyLanguage||'auto';
+  $('#defaultImageAspect').value=prefs.defaultImageAspect||'1:1';
+  $('#userImageQuality').value=prefs.imageQuality||'standard';
+  $('#defaultVideoAspect').value=prefs.defaultVideoAspect||'16:9';
+  $('#userVideoQuality').value=prefs.videoQuality||'fast';
+
+  $('#headingSize').value=prefs.headingSize||'medium';
+  $('#density').value=prefs.density||'comfortable';
+  $('#showEmojis').checked=prefs.showEmojis!==false;
+  $('#showOriginal').checked=prefs.showOriginal!==false;
+  preview();
+}
 function preview(){const size=$('#headingSize').value,density=$('#density').value,em=$('#showEmojis').checked,orig=$('#showOriginal').checked;const h=size==='large'?'30px':size==='small'?'18px':'23px',gap=density==='compact'?'8px':density==='relaxed'?'24px':'15px';$('#preview').innerHTML='<div style="font-weight:900;font-size:'+h+';margin-bottom:'+gap+'">'+(em?'🌐 ':'')+'Translation</div><div style="line-height:1.7">This is how a clean TD AI response feels inside Discord.</div>'+(orig?'<div class="tiny" style="margin-top:'+gap+';border-left:2px solid var(--line2);padding-left:10px">Original message preview</div>':'')}
 ['headingSize','density','showEmojis','showOriginal'].forEach(id=>$('#'+id).addEventListener('input',preview));
-async function savePrefs(){prefs=await api('/admin/api/personalization',{method:'PUT',body:JSON.stringify({headingSize:$('#headingSize').value,density:$('#density').value,showEmojis:$('#showEmojis').checked,showOriginal:$('#showOriginal').checked,voiceName:$('#voiceName').value,responseDelayMs:Number($('#delay').value)})});renderPrefs();toast('Preferences saved')}
-$('#saveText').onclick=()=>savePrefs().catch(e=>toast(e.message,true));$('#saveVoice').onclick=()=>savePrefs().catch(e=>toast(e.message,true));
+async function savePrefs(){
+  prefs=await api('/admin/api/personalization',{
+    method:'PUT',
+    body:JSON.stringify({
+      myLanguage:$('#myLanguage').value,
+      outgoingLanguage:$('#outgoingLanguage').value,
+      translationStyle:$('#translationStyle').value,
+      translationProvider:$('#translationProvider').value,
+      autoTranslateToMyLanguage:$('#autoTranslateToMyLanguage').checked,
+      wakeName:$('#wakeName').value,
+      followupWindowMs:Number($('#followupWindowMs').value),
+      voiceName:$('#voiceName').value,
+      responseDelayMs:Number($('#delay').value),
+      resultDestination:$('#resultDestination').value,
+      defaultReplyLanguage:$('#defaultReplyLanguage').value,
+      defaultImageAspect:$('#defaultImageAspect').value,
+      imageQuality:$('#userImageQuality').value,
+      defaultVideoAspect:$('#defaultVideoAspect').value,
+      videoQuality:$('#userVideoQuality').value,
+      headingSize:$('#headingSize').value,
+      density:$('#density').value,
+      showEmojis:$('#showEmojis').checked,
+      showOriginal:$('#showOriginal').checked
+    })
+  });
+  renderPrefs();
+  toast('Preferences saved');
+}
+$('#saveText').onclick=()=>savePrefs().catch(e=>toast(e.message,true));
+$('#saveVoice').onclick=()=>savePrefs().catch(e=>toast(e.message,true));
+$('#saveTrans').onclick=()=>savePrefs().catch(e=>toast(e.message,true));
+$('#saveAssistant').onclick=()=>savePrefs().catch(e=>toast(e.message,true));
 function applyPlanToStudio(){if(!me)return;const id=me.usage.account.planId;const img=$('#imgQuality'),vid=$('#vidQuality');[...img.options].forEach(o=>{o.disabled=id==='free'&&o.value==='premium'});[...vid.options].forEach(o=>{o.disabled=id==='free'||(id==='plus'&&o.value==='cinematic')});if(id==='free'){vid.value='lite';vid.disabled=true;$('#vidPrompt').disabled=true;$('#vidAspect').disabled=true;$('#copyVideo').disabled=true;$('#copyVideo').textContent='Upgrade to Plus for video'}else{vid.disabled=false;$('#vidPrompt').disabled=false;$('#vidAspect').disabled=false;$('#copyVideo').disabled=false;$('#copyVideo').textContent='Copy Discord command'}if(id==='free'&&img.value==='premium')img.value='standard';if(id==='plus'&&vid.value==='cinematic')vid.value='fast'}
 function mediaCommand(){applyPlanToStudio();const action=$('#imgAction').value,q=$('#imgQuality').value,a=$('#imgAspect').value,p=$('#imgPrompt').value.trim()||'<your prompt>';$('#imgCommand').textContent=action==='edit'?'/image edit image:<attach> prompt:'+p+' quality:'+q+' aspect:'+a:'/image generate prompt:'+p+' quality:'+q+' aspect:'+a;const vq=$('#vidQuality').value,va=$('#vidAspect').value,vp=$('#vidPrompt').value.trim()||'<your prompt>';$('#vidCommand').textContent='/video generate prompt:'+vp+' quality:'+vq+' aspect:'+va}
 ['imgAction','imgQuality','imgAspect','imgPrompt','vidQuality','vidAspect','vidPrompt'].forEach(id=>$('#'+id).addEventListener('input',mediaCommand));
@@ -1760,12 +1834,25 @@ export function registerAdminDashboard(app: Express): void {
       const userId = String(res.locals.dashboardUserId);
       res.json(
         await setUserPersonalization(userId, {
+          myLanguage: typeof req.body.myLanguage === 'string' ? req.body.myLanguage : undefined,
+          outgoingLanguage: typeof req.body.outgoingLanguage === 'string' ? req.body.outgoingLanguage : undefined,
+          translationStyle: req.body.translationStyle,
+          translationProvider: req.body.translationProvider,
+          autoTranslateToMyLanguage: req.body.autoTranslateToMyLanguage !== undefined ? Boolean(req.body.autoTranslateToMyLanguage) : undefined,
+          wakeName: typeof req.body.wakeName === 'string' ? req.body.wakeName : undefined,
+          followupWindowMs: req.body.followupWindowMs === undefined ? undefined : Number(req.body.followupWindowMs),
+          voiceName: typeof req.body.voiceName === 'string' ? req.body.voiceName : undefined,
+          responseDelayMs: req.body.responseDelayMs === undefined ? undefined : Number(req.body.responseDelayMs),
+          resultDestination: req.body.resultDestination,
+          defaultReplyLanguage: typeof req.body.defaultReplyLanguage === 'string' ? req.body.defaultReplyLanguage : undefined,
+          defaultImageAspect: typeof req.body.defaultImageAspect === 'string' ? req.body.defaultImageAspect : undefined,
+          imageQuality: req.body.imageQuality,
+          defaultVideoAspect: typeof req.body.defaultVideoAspect === 'string' ? req.body.defaultVideoAspect : undefined,
+          videoQuality: req.body.videoQuality,
           headingSize: req.body.headingSize as UserHeadingSize,
           density: req.body.density as UserDensity,
           showEmojis: req.body.showEmojis !== false,
-          showOriginal: req.body.showOriginal !== false,
-          voiceName: typeof req.body.voiceName === 'string' ? req.body.voiceName : undefined,
-          responseDelayMs: req.body.responseDelayMs === undefined ? undefined : Number(req.body.responseDelayMs)
+          showOriginal: req.body.showOriginal !== false
         })
       );
     } catch (error) {

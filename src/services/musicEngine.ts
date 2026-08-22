@@ -7,6 +7,7 @@ import {
   type AudioPlayer,
   type AudioResource
 } from '@discordjs/voice';
+import { env } from '../config.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -17,6 +18,7 @@ export type MusicTrack = {
   requestedBy: string;
   durationSeconds?: number;
   uploader?: string;
+  sourceType?: 'ytdlp' | 'lavalink' | 'direct';
 };
 
 export type MusicQueueSnapshot = {
@@ -54,7 +56,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function friendlyYtDlpError(error: unknown): Error {
+export function friendlyMusicError(error: unknown): Error {
   const text = errorMessage(error);
   const lower = text.toLowerCase();
 
@@ -68,10 +70,12 @@ function friendlyYtDlpError(error: unknown): Error {
     lower.includes('sign in to confirm') ||
     lower.includes('not a bot') ||
     lower.includes('po token') ||
-    lower.includes('cookies')
+    lower.includes('cookies') ||
+    lower.includes('403 forbidden') ||
+    lower.includes('bot detection')
   ) {
     return new Error(
-      'YouTube blocked this datacenter request. Try another public link/source or configure yt-dlp cookies/PO-token support for the deployment.'
+      'YouTube is currently blocking datacenter streaming requests. Try another public track or direct media link.'
     );
   }
 
@@ -79,14 +83,55 @@ function friendlyYtDlpError(error: unknown): Error {
     return new Error('That music link is not supported by the current playback backend.');
   }
 
-  return new Error(text.length > 700 ? `${text.slice(0, 700)}…` : text);
+  return new Error(text.length > 500 ? `${text.slice(0, 500)}…` : text);
 }
 
 function looksLikeUrl(value: string): boolean {
   return /^https?:\/\//i.test(value.trim());
 }
 
-async function resolveTrack(query: string, requestedBy: string): Promise<MusicTrack> {
+async function resolveViaLavalink(query: string, requestedBy: string): Promise<MusicTrack | undefined> {
+  if (!env.LAVALINK_URL) return undefined;
+  const baseUrl = env.LAVALINK_URL.replace(/\/+$/, '');
+  const searchUrl = `${baseUrl}/v4/loadtracks?identifier=${encodeURIComponent(
+    looksLikeUrl(query) ? query : `ytsearch:${query}`
+  )}`;
+
+  try {
+    const res = await fetch(searchUrl, {
+      headers: {
+        Authorization: env.LAVALINK_PASSWORD || 'youshallnotpass'
+      },
+      signal: AbortSignal.timeout(10_000)
+    });
+
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as {
+      loadType?: string;
+      data?: Array<{
+        info?: { title?: string; uri?: string; length?: number; author?: string; identifier?: string };
+      }>;
+    };
+
+    if (data.data && data.data.length > 0 && data.data[0]?.info) {
+      const info = data.data[0].info;
+      return {
+        id: info.identifier ?? `${Date.now()}`,
+        title: info.title ?? query,
+        url: info.uri ?? query,
+        requestedBy,
+        durationSeconds: info.length ? Math.floor(info.length / 1000) : undefined,
+        uploader: info.author,
+        sourceType: 'lavalink'
+      };
+    }
+  } catch (error) {
+    console.warn('Lavalink track resolve failed, falling back to local:', error);
+  }
+  return undefined;
+}
+
+async function resolveViaYtDlp(query: string, requestedBy: string): Promise<MusicTrack> {
   const clean = query.trim();
   if (!clean) throw new Error('Song name or link is required.');
 
@@ -112,7 +157,7 @@ async function resolveTrack(query: string, requestedBy: string): Promise<MusicTr
     );
     stdout = String(result.stdout ?? '').trim();
   } catch (error) {
-    throw friendlyYtDlpError(error);
+    throw friendlyMusicError(error);
   }
 
   const firstLine = stdout
@@ -151,8 +196,18 @@ async function resolveTrack(query: string, requestedBy: string): Promise<MusicTr
       Number.isFinite(parsed.duration) && Number(parsed.duration) > 0
         ? Number(parsed.duration)
         : undefined,
-    uploader: parsed.uploader?.trim() || undefined
+    uploader: parsed.uploader?.trim() || undefined,
+    sourceType: 'ytdlp'
   };
+}
+
+async function resolveTrack(query: string, requestedBy: string): Promise<MusicTrack> {
+  // Try Lavalink first if available
+  const lavalinkTrack = await resolveViaLavalink(query, requestedBy);
+  if (lavalinkTrack) return lavalinkTrack;
+
+  // Fallback to yt-dlp
+  return resolveViaYtDlp(query, requestedBy);
 }
 
 function stopProcesses(state: GuildMusicState): void {
@@ -247,7 +302,7 @@ async function startTrack(guildId: string, state: GuildMusicState, track: MusicT
   const childError = (error: Error) => {
     if (childFailed) return;
     childFailed = true;
-    state.hooks.onError?.(friendlyYtDlpError(error));
+    state.hooks.onError?.(friendlyMusicError(error));
     try { state.player.stop(true); } catch { /* no-op */ }
   };
 
@@ -258,7 +313,7 @@ async function startTrack(guildId: string, state: GuildMusicState, track: MusicT
     if (code && code !== 0 && !childFailed) {
       childFailed = true;
       state.hooks.onError?.(
-        friendlyYtDlpError(new Error(stderr.trim() || `yt-dlp exited with code ${code}.`))
+        friendlyMusicError(new Error(stderr.trim() || `yt-dlp exited with code ${code}.`))
       );
       try { state.player.stop(true); } catch { /* no-op */ }
     }
@@ -310,7 +365,7 @@ async function playNext(guildId: string, state: GuildMusicState): Promise<void> 
     await startTrack(guildId, state, next);
   } catch (error) {
     state.current = undefined;
-    state.hooks.onError?.(friendlyYtDlpError(error));
+    state.hooks.onError?.(friendlyMusicError(error));
     await playNext(guildId, state);
   }
 }
