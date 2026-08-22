@@ -1,0 +1,15 @@
+{
+  "version": "3.14.2",
+  "files": [
+    {
+      "path": "docs/guides/V3.14.2-FOLLOWUP-WINDOW-FIX-AR.md",
+      "bytes": 1432,
+      "sha256": "2cec8c3df08e74e39d562002bf4b5a6dd955a392fb84b881f63cb93365a73576"
+    },
+    {
+      "path": "src/services/voiceAi.ts",
+      "bytes": 49661,
+      "sha256": "fc96b826399ac72f74231adde180e8cafde2305fab9518109b059212b40ba4a7"
+    }
+  ]
+}

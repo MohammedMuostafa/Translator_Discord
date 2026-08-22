@@ -217,6 +217,73 @@ function finishLivePlayback(session: VoiceAiSession): void {
   if (stream && !stream.destroyed) stream.end();
 }
 
+async function armFollowupWindowAfterPlayback(
+  session: VoiceAiSession
+): Promise<void> {
+  const control =
+    await getVoiceControlSettings();
+
+  if (
+    session.purpose !== 'conversation' ||
+    control.activationMode !== 'wake-word' ||
+    !session.awakeSpeakerId
+  ) {
+    return;
+  }
+
+  const arm = () => {
+    // Only arm the follow-up window for the still-active session.
+    if (
+      sessions.get(
+        session.guildId
+      ) !== session
+    ) {
+      return;
+    }
+
+    session.awakeUntil =
+      Date.now() +
+      control.followupWindowMs;
+  };
+
+  // If Discord has already drained the buffered reply, start now.
+  if (
+    session.player.state.status ===
+    AudioPlayerStatus.Idle
+  ) {
+    arm();
+    return;
+  }
+
+  // Gemini's turnComplete means generation finished, NOT that Discord
+  // finished playing the buffered audio. Wait for actual playback Idle.
+  const onStateChange = (
+    _oldState: unknown,
+    newState: {
+      status: string;
+    }
+  ) => {
+    if (
+      newState.status !==
+      AudioPlayerStatus.Idle
+    ) {
+      return;
+    }
+
+    session.player.off(
+      'stateChange',
+      onStateChange
+    );
+
+    arm();
+  };
+
+  session.player.on(
+    'stateChange',
+    onStateChange
+  );
+}
+
 function mergeTranscript(current: string, incoming: string): string {
   const clean = incoming.trim();
   if (!clean) return current;
@@ -1175,17 +1242,18 @@ function handleLiveMessage(session: VoiceAiSession, message: LiveServerMessage):
     session.busy = false;
     session.turns += 1;
 
-    if (session.purpose === 'conversation' && session.awakeSpeakerId) {
-      void getVoiceControlSettings()
-        .then((control) => {
-          if (control.activationMode === 'wake-word') {
-            session.awakeUntil =
-              Date.now() +
-              control.followupWindowMs;
-          }
-        })
-        .catch(() => undefined);
-    }
+    // Start the follow-up timer only AFTER the reply has actually
+    // finished playing in Discord, not when Gemini finishes generating it.
+    void armFollowupWindowAfterPlayback(
+      session
+    ).catch(
+      (error) => {
+        console.error(
+          'Could not arm voice follow-up window:',
+          error
+        );
+      }
+    );
 
     const speakerId = session.lastSpeakerId ?? session.userId;
     const writeText = extractWriteCommand(session.inputTranscript);
