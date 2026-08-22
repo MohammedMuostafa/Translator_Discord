@@ -1,0 +1,16 @@
+{
+  "version": "3.15.1",
+  "base_git_blob_sha": "15951230f526c8c64cf90bdbd96dbbb902dbae2b",
+  "files": [
+    {
+      "path": "docs/guides/V3.15.1-BUFFER-TYPE-FIX.md",
+      "bytes": 825,
+      "sha256": "b392bae0526517cf7dd94e35d254bde4ce7d4e4148f5c0ee8c6021a90b982e4c"
+    },
+    {
+      "path": "src/services/voiceAi.ts",
+      "bytes": 66851,
+      "sha256": "4219cacc74e9415a8e51c1ab667178dfc8f2b48417e8eaf44450772b9f189bfd"
+    }
+  ]
+}

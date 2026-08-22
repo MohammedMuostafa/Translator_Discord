@@ -1714,7 +1714,7 @@ function attachLiveTranslationReceiver(session: VoiceAiSession): void {
     });
 
     const decoder = new OpusScript(48_000, 2, OpusScript.Application.AUDIO);
-    let pending = Buffer.alloc(0);
+    let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0);
     let inputBytes = 0;
     let finalized = false;
     const chunkBytes = 16_000 * 2 / 10; // 100 ms of 16kHz mono PCM16.
