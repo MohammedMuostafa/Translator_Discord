@@ -21,7 +21,16 @@ type StreamAudioDelta = {
 
 type StreamEvent = {
   event_type?: string;
-  delta?: StreamAudioDelta;
+  eventType?: string;
+  delta?: StreamAudioDelta & {
+    mimeType?: string;
+    sampleRate?: number;
+  };
+  error?: {
+    code?: string;
+    message?: string;
+  };
+  status?: string;
 };
 
 export function geminiTtsConfigured(): boolean {
@@ -80,10 +89,16 @@ function pcm16ToWav(
   return new Uint8Array(Buffer.concat([header, Buffer.from(pcm)]));
 }
 
-function parseSseLine(line: string): StreamEvent | undefined {
+function parseStreamLine(line: string): StreamEvent | undefined {
   const trimmed = line.trim();
-  if (!trimmed.startsWith('data:')) return undefined;
-  const payload = trimmed.slice(5).trim();
+  if (!trimmed || trimmed.startsWith(':') || trimmed.startsWith('event:')) {
+    return undefined;
+  }
+
+  const payload = trimmed.startsWith('data:')
+    ? trimmed.slice(5).trim()
+    : trimmed;
+
   if (!payload || payload === '[DONE]') return undefined;
 
   try {
@@ -134,7 +149,7 @@ export async function generateGeminiSpeech(
 
   try {
     const response = await fetch(
-      'https://generativelanguage.googleapis.com/v1beta/interactions',
+      'https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse',
       {
         method: 'POST',
         headers: {
@@ -146,7 +161,11 @@ export async function generateGeminiSpeech(
         body: JSON.stringify({
           model: route.model,
           input: `${pronunciationInstruction(language, control.humanLikeMode)}\n\nText to read:\n${cleanText}`,
-          response_format: { type: 'audio' },
+          response_format: {
+            type: 'audio',
+            delivery: 'inline',
+            mime_type: 'audio/l16'
+          },
           generation_config: {
             speech_config: [{ voice: voice.ttsVoice }]
           },
@@ -174,27 +193,74 @@ export async function generateGeminiSpeech(
     let sampleRate = 24_000;
     let channels = 1;
 
+    const seenEvents = new Set<string>();
+    let streamError: string | undefined;
+
     const consume = (line: string) => {
-      const event = parseSseLine(line);
-      const delta = event?.delta;
-      if (event?.event_type !== 'step.delta' || delta?.type !== 'audio' || !delta.data) return;
+      const event = parseStreamLine(line);
+      if (!event) return;
+
+      const eventType = event.event_type ?? event.eventType ?? 'unknown';
+      seenEvents.add(eventType);
+
+      if (eventType === 'error') {
+        streamError = event.error?.message
+          ?? event.error?.code
+          ?? 'Gemini Interactions stream returned an error event.';
+        return;
+      }
+
+      if (
+        eventType === 'interaction.status_update' &&
+        event.status === 'failed'
+      ) {
+        streamError = 'Gemini TTS interaction failed before audio was generated.';
+        return;
+      }
+
+      const delta = event.delta;
+      if (
+        eventType !== 'step.delta' ||
+        delta?.type !== 'audio' ||
+        !delta.data
+      ) {
+        return;
+      }
+
       chunks.push(Buffer.from(delta.data, 'base64'));
-      mimeType = delta.mime_type ?? mimeType;
-      sampleRate = delta.sample_rate ?? sampleRate;
+      mimeType = delta.mime_type ?? delta.mimeType ?? mimeType;
+      sampleRate = delta.sample_rate ?? delta.sampleRate ?? sampleRate;
       channels = delta.channels ?? channels;
     };
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+
       pending += decoder.decode(value, { stream: true });
       const lines = pending.split(/\r?\n/);
       pending = lines.pop() ?? '';
-      for (const line of lines) consume(line);
+
+      for (const line of lines) {
+        consume(line);
+      }
     }
 
+    // Flush any remaining UTF-8 decoder state before parsing the final event.
+    pending += decoder.decode();
     if (pending.trim()) consume(pending);
-    if (!chunks.length) throw new Error('Gemini TTS returned no audio chunks.');
+
+    if (streamError) {
+      throw new Error(`Gemini TTS stream error: ${streamError}`);
+    }
+
+    if (!chunks.length) {
+      const contentType = response.headers.get('content-type') ?? 'unknown';
+      const events = [...seenEvents].join(', ') || 'none';
+      throw new Error(
+        `Gemini TTS returned no audio chunks. Content-Type: ${contentType}. Events: ${events}.`
+      );
+    }
 
     const data = Buffer.concat(chunks);
     const approximateSeconds = mimeType === 'audio/l16'
