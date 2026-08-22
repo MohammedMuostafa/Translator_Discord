@@ -1,0 +1,87 @@
+{
+  "version": "3.12.0",
+  "created_for_repo": "MohammedMuostafa/Translator_Discord",
+  "notes": "Upload archive contents at repository root; paths are already organized.",
+  "files": [
+    {
+      "path": "docs/guides/README-UPGRADE-V3.12.md",
+      "sha256": "a7f5f9aacf3dcc1829721c5fb4fe1a46ebc8bf7a63f42d1428df6124fe48f0b9",
+      "bytes": 788
+    },
+    {
+      "path": "docs/guides/V3.12-VOICE-SAAS-AR.md",
+      "sha256": "78a433239f9ef3f55a7d6a68a614dc28189a5b422e264dc273dadd1b6c8ed505",
+      "bytes": 7792
+    },
+    {
+      "path": "package.json",
+      "sha256": "21a94331e47222941fb4e307f333374286dcfe63558de00e8c8fd12d8b8e1b44",
+      "bytes": 749
+    },
+    {
+      "path": "src/adminDashboard.ts",
+      "sha256": "37d3f140b58424baab1050c949d45ac204df125e5c61eba95b589ca22dadd935",
+      "bytes": 50665
+    },
+    {
+      "path": "src/commands.ts",
+      "sha256": "6f2199886bc73493a246cca38999ec37511b9283c5f73df3cd9fedc1977a4189",
+      "bytes": 9098
+    },
+    {
+      "path": "src/index.ts",
+      "sha256": "6e0c2989cafaaab7bcbd3bcef72e98fd84a55c85b784a26005e29e84a0aefd28",
+      "bytes": 10169
+    },
+    {
+      "path": "src/providers/translator.ts",
+      "sha256": "dd1ed4f541cea76c1604758010bf9c0e56344834b156f355ff2d14684f879c5a",
+      "bytes": 5157
+    },
+    {
+      "path": "src/services/billingStore.ts",
+      "sha256": "a615d914b60abc610952355fb73f6ba36d39c698d74d4f9e39b4772b3a4cdf68",
+      "bytes": 12170
+    },
+    {
+      "path": "src/services/gatewayChat.ts",
+      "sha256": "50541998ea7aff5c56d26f874d65a8f9abeef22758662f1e8650a970df60f00d",
+      "bytes": 7587
+    },
+    {
+      "path": "src/services/geminiTts.ts",
+      "sha256": "b4fad49f0c2d816021945c3040dbdc47f4ced629db503d1ec6d7693584f370e1",
+      "bytes": 7522
+    },
+    {
+      "path": "src/services/modelRouter.ts",
+      "sha256": "c2a665e1e9eadaa628dc9b36156928cad8c2072e626b472c41dc76d693537bfc",
+      "bytes": 9503
+    },
+    {
+      "path": "src/services/stt.ts",
+      "sha256": "e5340093da2453f76e3b47324588395e6a35a13c1a1fa42984d795142457de35",
+      "bytes": 6778
+    },
+    {
+      "path": "src/services/usageContext.ts",
+      "sha256": "c2080719807e00d1b4adcb848f795400d656b9eb22ee458afeb14e4ebe5aadf7",
+      "bytes": 373
+    },
+    {
+      "path": "src/services/voiceAi.ts",
+      "sha256": "50abb67592aa40d27e1822b6e060eb2d2f010bc1164f246a1052f3b9b1b5c023",
+      "bytes": 36491
+    },
+    {
+      "path": "src/services/voiceControl.ts",
+      "sha256": "da67a79a2e78b3ef8303bd189827ef5b69b510499a44ed7041c71b8b619c8c00",
+      "bytes": 4257
+    },
+    {
+      "path": "src/voiceHandlers.ts",
+      "sha256": "3aff0ae02e9212622591b95c6aca4488801ddbbd06940cd5eccfe06d701db37a",
+      "bytes": 9908
+    }
+  ]
+}

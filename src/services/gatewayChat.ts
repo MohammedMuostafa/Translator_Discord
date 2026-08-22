@@ -7,7 +7,14 @@ import {
   type Message
 } from 'discord.js';
 import { env } from '../config.js';
-import { aiChatConfigured, askAiChat, type ChatResponseLanguage, type ChatTurn } from './aiChat.js';
+import {
+  aiChatConfigured,
+  askAiChat,
+  type ChatResponseLanguage,
+  type ChatTurn
+} from './aiChat.js';
+import { runWithUsageUser } from './usageContext.js';
+import { assertFeatureAccess } from './billingStore.js';
 
 interface ChatSession {
   userId: string;
@@ -61,8 +68,12 @@ function splitDiscordMessage(text: string, maxLength = 1900): string[] {
 
   while (remaining.length > maxLength) {
     let splitAt = remaining.lastIndexOf('\n\n', maxLength);
-    if (splitAt < Math.floor(maxLength * 0.45)) splitAt = remaining.lastIndexOf('\n', maxLength);
-    if (splitAt < Math.floor(maxLength * 0.45)) splitAt = remaining.lastIndexOf(' ', maxLength);
+    if (splitAt < Math.floor(maxLength * 0.45)) {
+      splitAt = remaining.lastIndexOf('\n', maxLength);
+    }
+    if (splitAt < Math.floor(maxLength * 0.45)) {
+      splitAt = remaining.lastIndexOf(' ', maxLength);
+    }
     if (splitAt < 1) splitAt = maxLength;
 
     chunks.push(remaining.slice(0, splitAt).trim());
@@ -74,8 +85,7 @@ function splitDiscordMessage(text: string, maxLength = 1900): string[] {
 }
 
 async function sendChunks(message: Message, text: string): Promise<void> {
-  const chunks = splitDiscordMessage(text);
-  for (const chunk of chunks) {
+  for (const chunk of splitDiscordMessage(text)) {
     await message.reply({
       content: chunk,
       allowedMentions: { parse: [] }
@@ -120,7 +130,12 @@ async function handleDirectMessage(message: Message): Promise<void> {
   await message.channel.sendTyping().catch(() => undefined);
 
   try {
-    const reply = await askAiChat(session.history, content, session.language);
+    await assertFeatureAccess(userId, 'chat');
+    const reply = await runWithUsageUser(
+      userId,
+      () => askAiChat(session.history, content, session.language)
+    );
+
     session.history = trimHistory([
       ...session.history,
       { role: 'user', content },
@@ -193,9 +208,14 @@ export async function openAiDmChat(
   userId: string,
   language: ChatResponseLanguage = 'auto'
 ): Promise<void> {
-  if (!env.DISCORD_BOT_TOKEN) throw new Error('Interactive chat requires DISCORD_BOT_TOKEN.');
-  if (!aiChatConfigured()) throw new Error('AI chat is not configured.');
+  if (!env.DISCORD_BOT_TOKEN) {
+    throw new Error('Interactive chat requires DISCORD_BOT_TOKEN.');
+  }
+  if (!aiChatConfigured()) {
+    throw new Error('AI chat is not configured.');
+  }
 
+  await assertFeatureAccess(userId, 'chat');
   await waitForGatewayReady();
 
   sessions.set(userId, {
@@ -242,7 +262,10 @@ export function aiDmChatStatus(userId: string): {
   if (!session) return { active: false };
 
   const expiresAt = session.lastActivityAt + sessionTtlMs();
-  const expiresInMinutes = Math.max(1, Math.ceil((expiresAt - Date.now()) / 60_000));
+  const expiresInMinutes = Math.max(
+    1,
+    Math.ceil((expiresAt - Date.now()) / 60_000)
+  );
 
   return {
     active: true,
@@ -254,10 +277,15 @@ export function aiDmChatStatus(userId: string): {
 
 export function chatLanguageLabel(language: ChatResponseLanguage): string {
   switch (language) {
-    case 'ar-eg': return 'Egyptian Arabic';
-    case 'ar-msa': return 'Modern Standard Arabic';
-    case 'en': return 'English';
-    case 'fa': return 'Persian / Farsi';
-    default: return 'Auto — follow my language';
+    case 'ar-eg':
+      return 'Egyptian Arabic';
+    case 'ar-msa':
+      return 'Modern Standard Arabic';
+    case 'en':
+      return 'English';
+    case 'fa':
+      return 'Persian / Farsi';
+    default:
+      return 'Auto — follow my language';
   }
 }

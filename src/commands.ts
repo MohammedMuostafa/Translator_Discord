@@ -87,6 +87,16 @@ const aiLanguageOption = {
   ]
 };
 
+const liveTranslationLanguageChoices = [
+  { name: 'English', value: 'en' },
+  { name: 'Egyptian Arabic', value: 'ar-eg' },
+  { name: 'Modern Standard Arabic', value: 'ar-msa' },
+  { name: 'Persian / Farsi', value: 'fa' },
+  { name: 'French', value: 'fr' },
+  { name: 'Spanish', value: 'es' },
+  { name: 'German', value: 'de' }
+];
+
 export const commands = [
   {
     ...common,
@@ -172,23 +182,100 @@ export const commands = [
   {
     ...guildOnly,
     name: 'voicechat',
-    description: 'Talk with TD AI inside a Discord voice channel',
+    description: 'Talk with TD AI, translate live, or control the current voice session',
     type: 1,
     options: [
       {
         name: 'join',
-        description: 'Join the voice channel you are currently in',
+        description: 'Join your current voice channel in AI conversation mode',
         type: 1,
         options: [chatLanguageOption]
       },
       {
-        name: 'leave',
-        description: 'Disconnect TD AI and clear temporary voice conversation memory',
+        name: 'translate',
+        description: 'Start two-way live voice translation in your current voice channel',
+        type: 1,
+        options: [
+          {
+            name: 'language_a',
+            description: 'First conversation language',
+            type: 3,
+            required: true,
+            choices: liveTranslationLanguageChoices
+          },
+          {
+            name: 'language_b',
+            description: 'Second conversation language',
+            type: 3,
+            required: true,
+            choices: liveTranslationLanguageChoices
+          },
+          {
+            name: 'output',
+            description: 'How translated speech should be delivered',
+            type: 3,
+            required: false,
+            choices: [
+              { name: 'Voice + Captions', value: 'both' },
+              { name: 'Voice only', value: 'voice' },
+              { name: 'Captions only', value: 'captions' }
+            ]
+          },
+          {
+            name: 'quality',
+            description: 'Translation quality / latency profile',
+            type: 3,
+            required: false,
+            choices: [
+              { name: 'Fast', value: 'fast' },
+              { name: 'Balanced', value: 'balanced' },
+              { name: 'Accurate', value: 'accurate' }
+            ]
+          }
+        ]
+      },
+      {
+        name: 'translate-stop',
+        description: 'Stop live translation and return TD AI to conversation mode',
+        type: 1
+      },
+      {
+        name: 'write',
+        description: 'Write a message in the text chat attached to the current voice channel',
+        type: 1,
+        options: [
+          {
+            name: 'text',
+            description: 'Message TD AI should post',
+            type: 3,
+            required: true,
+            max_length: 1800
+          }
+        ]
+      },
+      {
+        name: 'skip',
+        description: 'Stop the current TD AI voice response immediately',
+        type: 1
+      },
+      {
+        name: 'reconnect',
+        description: 'Reconnect the current TD AI voice session',
+        type: 1
+      },
+      {
+        name: 'usage',
+        description: 'Show your TD AI plan, used credits and remaining credits',
         type: 1
       },
       {
         name: 'status',
         description: 'Show the current TD AI voice-chat status for this server',
+        type: 1
+      },
+      {
+        name: 'leave',
+        description: 'Disconnect TD AI and clear temporary voice conversation memory',
         type: 1
       }
     ]

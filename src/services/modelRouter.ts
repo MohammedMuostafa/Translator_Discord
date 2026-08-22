@@ -4,6 +4,13 @@ import {
   type TextTask,
   type TextTransport
 } from './runtimeConfig.js';
+import {
+  assertFeatureAccess,
+  estimateTextCredits,
+  recordProviderHealth,
+  recordUsage
+} from './billingStore.js';
+import { currentUsageUserId } from './usageContext.js';
 
 export type ModelMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -28,20 +35,14 @@ function parseModelChain(value: string): string[] {
 }
 
 function getErrorStatus(error: unknown): number | undefined {
-  if (
-    typeof error === 'object' &&
-    error !== null &&
-    'status' in error
-  ) {
+  if (typeof error === 'object' && error !== null && 'status' in error) {
     const status = Number((error as { status?: unknown }).status);
     return Number.isFinite(status) ? status : undefined;
   }
-
   return undefined;
 }
 
 function supportsTemperature(model: string): boolean {
-  // Gemini 3.6+ / 3.7 deprecate legacy sampling controls.
   return !/^gemini-3(?:\.|[-])/i.test(model);
 }
 
@@ -52,28 +53,18 @@ function providerError(
   model: string
 ): string {
   let message = body;
-
   try {
-    const parsed = JSON.parse(body) as {
-      error?: { message?: string; status?: string };
-    };
+    const parsed = JSON.parse(body) as { error?: { message?: string } };
     message = parsed.error?.message ?? body;
   } catch {
     // Keep provider text.
   }
 
-  if (status === 429) {
-    return `${provider}/${model} is rate-limited right now.`;
-  }
-
-  if (status === 503) {
-    return `${provider}/${model} is temporarily busy.`;
-  }
-
+  if (status === 429) return `${provider}/${model} is rate-limited right now.`;
+  if (status === 503) return `${provider}/${model} is temporarily busy.`;
   if (status === 404) {
     return `${provider}/${model} was not found by the provider. Check the exact model ID in TD AI Control Center. Provider said: ${message.slice(0, 300)}`;
   }
-
   return `${provider}/${model} error (${status}): ${message.slice(0, 450)}`;
 }
 
@@ -85,9 +76,7 @@ function extractOpenAiText(raw: string): string {
       };
     }>;
   };
-
   const content = data.choices?.[0]?.message?.content;
-
   return (
     typeof content === 'string'
       ? content
@@ -99,10 +88,7 @@ function extractOpenAiText(raw: string): string {
 
 function geminiContents(messages: ModelMessage[]): {
   systemInstruction?: { parts: Array<{ text: string }> };
-  contents: Array<{
-    role: 'user' | 'model';
-    parts: Array<{ text: string }>;
-  }>;
+  contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }>;
 } {
   const system = messages
     .filter((message) => message.role === 'system')
@@ -117,50 +103,28 @@ function geminiContents(messages: ModelMessage[]): {
       parts: [{ text: message.content }]
     }));
 
-  if (!contents.length) {
-    contents.push({
-      role: 'user',
-      parts: [{ text: 'Continue.' }]
-    });
-  }
+  if (!contents.length) contents.push({ role: 'user', parts: [{ text: 'Continue.' }] });
 
   return {
-    ...(system
-      ? {
-          systemInstruction: {
-            parts: [{ text: system }]
-          }
-        }
-      : {}),
+    ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
     contents
   };
 }
 
 function extractGeminiText(raw: string): string {
   const data = JSON.parse(raw) as {
-    candidates?: Array<{
-      content?: {
-        parts?: Array<{ text?: string }>;
-      };
-    }>;
-    promptFeedback?: {
-      blockReason?: string;
-    };
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    promptFeedback?: { blockReason?: string };
   };
-
   const text = data.candidates?.[0]?.content?.parts
     ?.map((part) => part.text ?? '')
     .join('')
     .trim();
 
   if (text) return text;
-
   if (data.promptFeedback?.blockReason) {
-    throw new Error(
-      `Gemini blocked the request: ${data.promptFeedback.blockReason}`
-    );
+    throw new Error(`Gemini blocked the request: ${data.promptFeedback.blockReason}`);
   }
-
   return '';
 }
 
@@ -174,14 +138,8 @@ async function requestOpenAiCompatible(
   timeoutMs: number,
   providerName: string
 ): Promise<string> {
-  const request: Record<string, unknown> = {
-    model,
-    messages
-  };
-
-  if (temperature !== undefined && supportsTemperature(model)) {
-    request.temperature = temperature;
-  }
+  const request: Record<string, unknown> = { model, messages };
+  if (temperature !== undefined && supportsTemperature(model)) request.temperature = temperature;
 
   const response = await fetch(apiUrl, {
     method: 'POST',
@@ -194,7 +152,6 @@ async function requestOpenAiCompatible(
   });
 
   const raw = await response.text();
-
   if (!response.ok) {
     throw Object.assign(
       new Error(providerError(response.status, raw, providerName, model)),
@@ -203,12 +160,7 @@ async function requestOpenAiCompatible(
   }
 
   const text = extractOpenAiText(raw);
-  if (!text) {
-    throw new Error(
-      `${providerName}/${model} returned an empty response for ${task}.`
-    );
-  }
-
+  if (!text) throw new Error(`${providerName}/${model} returned an empty response for ${task}.`);
   return text;
 }
 
@@ -222,27 +174,18 @@ async function requestGeminiNative(
   providerName: string
 ): Promise<string> {
   const cleanModel = normalizeModelId(model);
-
   const generationConfig: Record<string, unknown> = {};
 
-  // Force machine-readable output for the two features that parse JSON.
-  // This fixes translation / Smart Answer becoming malformed after model changes.
   if (task === 'translation' || task === 'smart_reply') {
     generationConfig.responseMimeType = 'application/json';
   }
-
-  if (
-    temperature !== undefined &&
-    supportsTemperature(cleanModel)
-  ) {
+  if (temperature !== undefined && supportsTemperature(cleanModel)) {
     generationConfig.temperature = temperature;
   }
 
   const body = {
     ...geminiContents(messages),
-    ...(Object.keys(generationConfig).length
-      ? { generationConfig }
-      : {})
+    ...(Object.keys(generationConfig).length ? { generationConfig } : {})
   };
 
   const response = await fetch(
@@ -259,29 +202,20 @@ async function requestGeminiNative(
   );
 
   const raw = await response.text();
-
   if (!response.ok) {
     throw Object.assign(
-      new Error(
-        providerError(
-          response.status,
-          raw,
-          providerName,
-          cleanModel
-        )
-      ),
+      new Error(providerError(response.status, raw, providerName, cleanModel)),
       { status: response.status }
     );
   }
 
   const text = extractGeminiText(raw);
-  if (!text) {
-    throw new Error(
-      `${providerName}/${cleanModel} returned an empty response for ${task}.`
-    );
-  }
-
+  if (!text) throw new Error(`${providerName}/${cleanModel} returned an empty response for ${task}.`);
   return text;
+}
+
+function taskFeature(task: TextTask) {
+  return task;
 }
 
 export async function callTextModel(
@@ -299,16 +233,15 @@ export async function callTextModel(
   transport: TextTransport;
 }> {
   const route = await getTextTaskRoute(task);
-  const models = parseModelChain(
-    options.modelOverride?.trim() || route.model
-  );
+  const userId = currentUsageUserId();
+  if (userId) await assertFeatureAccess(userId, taskFeature(task));
+  const models = parseModelChain(options.modelOverride?.trim() || route.model);
   const timeoutMs = options.timeoutMs ?? 60_000;
 
-  if (!models.length) {
-    throw new Error(`No AI models are configured for '${task}'.`);
-  }
+  if (!models.length) throw new Error(`No AI models are configured for '${task}'.`);
 
   const errors: string[] = [];
+  const inputChars = messages.reduce((sum, message) => sum + message.content.length, 0);
 
   for (const model of models) {
     let transientRetries = 0;
@@ -337,10 +270,22 @@ export async function callTextModel(
                 route.providerName
               );
 
+        await recordProviderHealth({
+          provider: route.providerName,
+          model,
+          ok: true
+        }).catch(() => undefined);
+
+        if (userId) {
+          await recordUsage(
+            userId,
+            taskFeature(task),
+            estimateTextCredits(inputChars, text.length)
+          ).catch((error) => console.error('Could not meter text usage:', error));
+        }
+
         if (model !== models[0]) {
-          console.log(
-            `AI failover successful: ${task} -> ${route.providerName}/${model}`
-          );
+          console.log(`AI failover successful: ${task} -> ${route.providerName}/${model}`);
         }
 
         return {
@@ -350,37 +295,28 @@ export async function callTextModel(
           transport: route.transport
         };
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : 'Unknown AI error.';
+        const message = error instanceof Error ? error.message : 'Unknown AI error.';
         const status = getErrorStatus(error);
-
         errors.push(`${model}: ${message}`);
 
-        // Quota/rate-limit and provider overload should fail over immediately.
+        await recordProviderHealth({
+          provider: route.providerName,
+          model,
+          ok: false,
+          status,
+          message
+        }).catch(() => undefined);
+
         if (status === 429 || status === 503) {
-          console.warn(
-            `AI model unavailable (${status}): ${model}. Trying fallback model...`
-          );
+          console.warn(`AI model unavailable (${status}): ${model}. Trying fallback model...`);
           break;
         }
 
-        // Bad credentials, unsupported model IDs, or invalid input can still be
-        // model-specific, so allow the next explicitly configured fallback.
-        if (
-          status === 400 ||
-          status === 401 ||
-          status === 403 ||
-          status === 404
-        ) {
-          console.warn(
-            `AI model failed (${status}): ${model}. Trying fallback model...`
-          );
+        if (status === 400 || status === 401 || status === 403 || status === 404) {
+          console.warn(`AI model failed (${status}): ${model}. Trying fallback model...`);
           break;
         }
 
-        // Short retry for transient server failures, then move on.
         if (
           status !== undefined &&
           [500, 502, 504].includes(status) &&
@@ -391,19 +327,13 @@ export async function callTextModel(
           continue;
         }
 
-        // Timeout/network/unknown errors should not block the whole request.
-        console.warn(
-          `AI model failed: ${model}. Trying fallback model...`
-        );
+        console.warn(`AI model failed: ${model}. Trying fallback model...`);
         break;
       }
     }
   }
 
   throw new Error(
-    [
-      'All configured AI models are currently unavailable.',
-      ...errors.slice(-3)
-    ].join(' | ')
+    ['All configured AI models are currently unavailable.', ...errors.slice(-3)].join(' | ')
   );
 }
