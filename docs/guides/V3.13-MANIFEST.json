@@ -1,0 +1,46 @@
+{
+  "version": "3.13.0",
+  "repo": "MohammedMuostafa/Translator_Discord",
+  "changed_files": [
+    {
+      "path": "docs/guides/V3.13-VOICE-DASHBOARD-AR.md",
+      "bytes": 4776,
+      "sha256": "b4d188da72c84cb44bedc3899d11698992da88efcab33f98a2d4dc9100e755bb"
+    },
+    {
+      "path": "src/adminDashboard.ts",
+      "bytes": 51241,
+      "sha256": "34b9e2d69472131f33279b48b5aa4ac92e3d3128b8d7eaf94cf619b86419dd66"
+    },
+    {
+      "path": "src/discord.ts",
+      "bytes": 4226,
+      "sha256": "0c0ea71ce45ad4f43c9ffa11e803e4e5103d8916e38d4990c80c4e777588f128"
+    },
+    {
+      "path": "src/index.ts",
+      "bytes": 10267,
+      "sha256": "2e3208e32a615c5be4040850722fa612299a7a9e3992449e0c7f06347117d9ca"
+    },
+    {
+      "path": "src/services/geminiTts.ts",
+      "bytes": 9310,
+      "sha256": "ae53de4a4e8b23f6e074a8525852be927f8d25860f15540a01a144f552c794c9"
+    },
+    {
+      "path": "src/services/userPersonalization.ts",
+      "bytes": 3474,
+      "sha256": "0a78656ab7e395571187ef164ed922e076b657d2dfc7dec89cc0cd9901dbfc99"
+    },
+    {
+      "path": "src/services/voiceAi.ts",
+      "bytes": 45846,
+      "sha256": "bd432a5b002921c779eee4b2b0a8f903fd3fd536b95592abcf4060ab199b04ff"
+    },
+    {
+      "path": "src/voiceHandlers.ts",
+      "bytes": 10094,
+      "sha256": "f0f7bccd62fb1bfcfd08a763c01ac208712fec3f6ef50781355cc0ad2c15293d"
+    }
+  ]
+}

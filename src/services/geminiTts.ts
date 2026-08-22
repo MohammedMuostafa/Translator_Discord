@@ -3,6 +3,7 @@ import { languageInstruction, normalizeLanguage } from '../languages.js';
 import { getGeminiTaskRoute, getVoiceRuntimeSettings } from './runtimeConfig.js';
 import { getVoiceControlSettings } from './voiceControl.js';
 import { currentUsageUserId } from './usageContext.js';
+import { getUserPersonalization } from './userPersonalization.js';
 import { estimateAudioCredits, recordUsage } from './billingStore.js';
 
 export type GeneratedSpeech = {
@@ -135,6 +136,11 @@ export async function generateGeminiSpeech(
   const route = await getGeminiTaskRoute('tts');
   const voice = await getVoiceRuntimeSettings();
   const control = await getVoiceControlSettings();
+  const usageUserId = currentUsageUserId();
+  const personal = usageUserId
+    ? await getUserPersonalization(usageUserId)
+    : undefined;
+  const selectedVoice = personal?.voiceName ?? voice.ttsVoice;
   const cleanText = text.trim();
 
   if (!cleanText) throw new Error('There is no text to read aloud.');
@@ -167,7 +173,7 @@ export async function generateGeminiSpeech(
             mime_type: 'audio/l16'
           },
           generation_config: {
-            speech_config: [{ voice: voice.ttsVoice }]
+            speech_config: [{ voice: selectedVoice }]
           },
           stream: true
         }),

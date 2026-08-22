@@ -205,6 +205,8 @@ export function handleVoiceChatCommand(interaction: DiscordInteraction): void {
                   : '',
                 status.activeSpeakerId ? `Current speaker: <@${status.activeSpeakerId}>` : '',
                 `Language: **${chatLanguageLabel(status.language ?? 'auto')}**`,
+                status.voiceName ? `Voice: **${status.voiceName}**` : '',
+                status.responseDelayMs !== undefined ? `Response delay: **${status.responseDelayMs} ms**` : '',
                 `State: **${status.busy ? 'Responding' : 'Listening'}**`,
                 `Context turns: **${status.turns ?? 0}**`,
                 status.inputTranscript ? `Heard: ${status.inputTranscript.slice(0, 250)}` : '',
