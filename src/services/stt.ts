@@ -93,7 +93,7 @@ async function callGeminiStt(
           role: 'user',
           parts: [
             {
-              text: 'Transcribe the spoken audio accurately. Do not summarize, translate, explain, or answer it. Preserve the speaker language and wording. Return JSON only with keys "text" and "language". The language value should be a short code such as en, fa, ar-eg, ar-msa, fr, de, es, etc.'
+              text: 'Transcribe the spoken audio accurately. This audio may be extremely short and may contain only a wake phrase such as "TD", "TD AI", "تي دي", "تيدي", or "يا تي دي". Do not summarize, translate, explain, or answer it. Preserve the speaker language and wording. If human speech is audible, return the closest faithful transcription instead of an empty string. Return JSON only with keys "text" and "language". The language value should be a short code such as en, fa, ar-eg, ar-msa, fr, de, es, etc.'
             },
             {
               inlineData: {
@@ -144,7 +144,11 @@ async function callGeminiStt(
     language?: string;
   };
 
-  if (!result.text?.trim()) throw new Error('Gemini STT detected no speech.');
+  if (!result.text?.trim()) {
+    throw new Error(
+      'Gemini STT detected no speech; Live audio fallback should be used.'
+    );
+  }
   await meterStt(bytes);
 
   return {

@@ -1,0 +1,20 @@
+{
+  "version": "3.14.1",
+  "files": [
+    {
+      "path": "docs/guides/V3.14.1-VOICE-RELIABILITY-AR.md",
+      "bytes": 2194,
+      "sha256": "81727b83ef261dbd29e878b7b6f8e6bef9cbbcdcf0283ae4dd876c6a61768cdf"
+    },
+    {
+      "path": "src/services/stt.ts",
+      "bytes": 7072,
+      "sha256": "ac6df8fbeaf9c2df15a482a9cba2ead060cf47b0c47629a8e402b17ce20f482a"
+    },
+    {
+      "path": "src/services/voiceAi.ts",
+      "bytes": 48437,
+      "sha256": "9f81ad5010c9ca9fd2558fe51dddc89084529b038873d7d59ada10a20fe2c140"
+    }
+  ]
+}

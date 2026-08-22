@@ -237,7 +237,11 @@ function inferSpeechLanguage(reply: string, preferred: ChatResponseLanguage | st
   return 'en';
 }
 
-function languageSystemInstruction(language: ChatResponseLanguage): string {
+function languageSystemInstruction(
+  language: ChatResponseLanguage,
+  wakeRequired = false,
+  wakeWords: string[] = []
+): string {
   const base = [
     'You are TD AI in a Discord group voice channel.',
     'Multiple human speakers may talk to you.',
@@ -248,8 +252,34 @@ function languageSystemInstruction(language: ChatResponseLanguage): string {
     'Inputs beginning with [TD_WAKE] are trusted host wake events. Reply only with a very short acknowledgement in the speaker language.',
     'Inputs beginning with [TD_HOST] are trusted host action results. Speak only the requested acknowledgement or usage result and do not question whether the action happened.',
     'The host may send text transcripts instead of raw audio when wake-word mode is enabled. Treat that transcript exactly as the current speaker turn.',
+    'Inputs beginning with [TD_ACCEPTED] are already authorized by the host wake gate. Answer them normally and ignore the marker.',
     'If interrupted, stop speaking and listen.'
   ];
+
+  if (wakeRequired) {
+    base.push(
+      `Wake mode is ON. For raw microphone audio, stay completely silent unless the speaker clearly calls TD first. Accepted wake names include: ${[
+        ...wakeWords,
+        'TD',
+        'TD AI',
+        'Hey TD',
+        'يا TD',
+        'تي دي',
+        'تيدي',
+        'يا تي دي'
+      ].filter(Boolean).join(', ')}.`
+    );
+    base.push(
+      'If raw audio is ordinary conversation that does not call TD, output no spoken response at all.'
+    );
+    base.push(
+      'After a clear TD wake call, answer the request naturally. A host-tagged [TD_ACCEPTED], [TD_WAKE], or [TD_HOST] turn is always authorized.'
+    );
+  } else {
+    base.push(
+      'Wake mode is OFF. Respond normally to the current speaker.'
+    );
+  }
 
   switch (language) {
     case 'ar-eg':
@@ -712,6 +742,54 @@ function attachCascadeReceiver(session: VoiceAiSession): void {
 }
 
 
+async function sendRawPcmToLive(
+  session: VoiceAiSession,
+  speakerId: string,
+  pcm48Stereo: Buffer
+): Promise<void> {
+  if (!session.live) {
+    throw new Error('Gemini Live is not connected.');
+  }
+
+  const pcm16Mono =
+    discordPcm48StereoToGemini16Mono(
+      pcm48Stereo
+    );
+
+  if (!pcm16Mono.byteLength) {
+    throw new Error(
+      'Discord voice capture contained no usable PCM audio.'
+    );
+  }
+
+  session.lastSpeakerId =
+    speakerId;
+
+  session.inputTranscript =
+    '';
+
+  session.outputTranscript =
+    '';
+
+  session.busy =
+    true;
+
+  session.live.sendRealtimeInput({
+    audio: {
+      data:
+        pcm16Mono.toString(
+          'base64'
+        ),
+      mimeType:
+        'audio/pcm;rate=16000'
+    }
+  });
+
+  session.live.sendRealtimeInput({
+    audioStreamEnd: true
+  });
+}
+
 async function sendLiveText(
   session: VoiceAiSession,
   speakerId: string,
@@ -883,18 +961,44 @@ async function processWakeGatedLiveUtterance(
     await sendLiveText(
       session,
       speakerId,
-      commandText
+      `[TD_ACCEPTED]\n${commandText}`
     );
   } catch (error) {
-    console.error(
-      'Wake-gated Gemini Live error:',
+    console.warn(
+      'Wake STT failed; trying direct Gemini Live audio fallback:',
       error
     );
 
-    await notifyUser(
-      session.userId,
-      `❌ **TD AI Voice:** ${errorMessage(error)}`
-    );
+    if (session.live) {
+      try {
+        handedToLive = true;
+
+        await sendRawPcmToLive(
+          session,
+          speakerId,
+          pcm
+        );
+
+        return;
+      } catch (fallbackError) {
+        handedToLive = false;
+
+        console.error(
+          'Direct Gemini Live audio fallback failed:',
+          fallbackError
+        );
+
+        await notifyUser(
+          session.userId,
+          `❌ **TD AI Voice:** ${errorMessage(fallbackError)}`
+        );
+      }
+    } else {
+      await notifyUser(
+        session.userId,
+        `❌ **TD AI Voice:** ${errorMessage(error)}`
+      );
+    }
   } finally {
     if (!handedToLive) {
       session.busy = false;
@@ -949,7 +1053,10 @@ function attachWakeGatedLiveReceiver(
               behavior:
                 EndBehaviorType.AfterSilence,
               duration:
-                session.silenceMs
+                Math.max(
+                  session.silenceMs,
+                  650
+                )
             }
           }
         );
@@ -1099,6 +1206,7 @@ function handleLiveMessage(session: VoiceAiSession, message: LiveServerMessage):
 async function connectGeminiLive(session: VoiceAiSession): Promise<void> {
   const route = await getGeminiTaskRoute('voice_live');
   const voice = await getVoiceRuntimeSettings();
+  const control = await getVoiceControlSettings();
   const ai = new GoogleGenAI({ apiKey: route.apiKey });
 
   const live = await ai.live.connect({
@@ -1128,7 +1236,13 @@ async function connectGeminiLive(session: VoiceAiSession): Promise<void> {
     config: {
       responseModalities: [Modality.AUDIO],
       systemInstruction: {
-        parts: [{ text: languageSystemInstruction(session.language) }]
+        parts: [{
+          text: languageSystemInstruction(
+            session.language,
+            control.activationMode === 'wake-word',
+            control.wakeWords
+          )
+        }]
       },
       speechConfig: {
         voiceConfig: {
