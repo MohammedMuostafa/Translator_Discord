@@ -172,6 +172,58 @@ export const commands = [
   },
   {
     ...guildOnly,
+    name: 'music',
+    description: 'Play music in your current Discord voice channel',
+    type: 1,
+    options: [
+      {
+        name: 'play',
+        description: 'Play a song by name or public link',
+        type: 1,
+        options: [
+          {
+            name: 'query',
+            description: 'Song name, artist + title, or public media URL',
+            type: 3,
+            required: true,
+            max_length: 500
+          }
+        ]
+      },
+      {
+        name: 'pause',
+        description: 'Pause the current track',
+        type: 1
+      },
+      {
+        name: 'resume',
+        description: 'Resume paused music',
+        type: 1
+      },
+      {
+        name: 'skip',
+        description: 'Skip the current track',
+        type: 1
+      },
+      {
+        name: 'stop',
+        description: 'Stop music and clear the queue',
+        type: 1
+      },
+      {
+        name: 'queue',
+        description: 'Show the current music queue',
+        type: 1
+      },
+      {
+        name: 'now',
+        description: 'Show what is playing now',
+        type: 1
+      }
+    ]
+  },
+  {
+    ...guildOnly,
     name: 'voicechat',
     description: 'Talk with TD AI or control the current voice session',
     type: 1,

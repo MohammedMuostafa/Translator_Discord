@@ -1,0 +1,46 @@
+{
+  "version": "3.16.0",
+  "repo": "MohammedMuostafa/Translator_Discord",
+  "files": [
+    {
+      "path": "Dockerfile",
+      "bytes": 425,
+      "sha256": "e2909ceb5608d0ca299e70bef6dc14aaed4a8bfde6624e128612a7a74af1b915"
+    },
+    {
+      "path": "docs/guides/V3.16-MUSIC-AR.md",
+      "bytes": 3609,
+      "sha256": "d0c1c77da8795dd13fe7a1bd4002af59dae9e0f0756cf55a816f02c6556884f4"
+    },
+    {
+      "path": "package.json",
+      "bytes": 749,
+      "sha256": "35eb9dc890be2d57ee074e8a9f7c12705b045875fdb7f7c397301e5bad5d4cb7"
+    },
+    {
+      "path": "src/commands.ts",
+      "bytes": 12392,
+      "sha256": "49aba7426a625b39ac471d4a1f182af42a43878aed3f1fbf4bc93f96cbaed8dd"
+    },
+    {
+      "path": "src/index.ts",
+      "bytes": 11276,
+      "sha256": "fd16d4b0687cbba72bba86b2cb63d469cc21a9349a1531d3c62a99184512f9f4"
+    },
+    {
+      "path": "src/musicHandlers.ts",
+      "bytes": 5141,
+      "sha256": "4b67fddc64c9f8703da21c23782929da577a23d54e89fa3a63b2a37cc9d7f556"
+    },
+    {
+      "path": "src/services/musicEngine.ts",
+      "bytes": 9388,
+      "sha256": "c89c458ff319c13922cbf58f7699276c4e1fd4c46c660fe446665523ea66db9b"
+    },
+    {
+      "path": "src/services/voiceAi.ts",
+      "bytes": 78710,
+      "sha256": "2c74025eba97ce31296dd4e92262e655374c1149a31e1aea8b1fa0f56e6826dc"
+    }
+  ]
+}

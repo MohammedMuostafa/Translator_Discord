@@ -30,6 +30,7 @@ import {
 } from './aiActionHandlers.js';
 import { handleVoiceChatCommand } from './voiceHandlers.js';
 import { handleImageCommand, handleVideoCommand } from './mediaHandlers.js';
+import { handleMusicCommand } from './musicHandlers.js';
 import type { DiscordInteraction } from './types.js';
 import { registerGlobalCommands } from './registerCommands.js';
 import { aiConfigured } from './providers/translator.js';
@@ -51,7 +52,7 @@ registerAdminDashboard(app);
 const statusPayload = () => ({
   ok: true,
   service: 'td-ai',
-  version: '3.15.2',
+  version: '3.16.0',
   interactionEndpoint: '/interactions',
   adminDashboard: '/admin',
   translationProvider: env.TRANSLATION_PROVIDER,
@@ -74,6 +75,8 @@ const statusPayload = () => ({
   voiceChatWrite: true,
   voiceSkip: true,
   voiceReconnect: true,
+  musicPlayback: true,
+  musicVoiceTools: true,
   usageCredits: true,
   plans: true,
   imageGeneration: true,
@@ -297,6 +300,15 @@ async function processInteraction(
     return;
   }
 
+  if (name === 'music') {
+    res.json({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
+    });
+    handleMusicCommand(interaction);
+    return;
+  }
+
   if (name === 'image') {
     res.json({
       type: InteractionResponseType.DeferredChannelMessageWithSource,
@@ -369,7 +381,7 @@ app.post(
 );
 
 app.listen(env.PORT, env.HOST, () => {
-  console.log(`TD AI v3.15.2 listening on ${env.HOST}:${env.PORT}`);
+  console.log(`TD AI v3.16 listening on ${env.HOST}:${env.PORT}`);
   console.log('Interactions endpoint: /interactions');
   console.log('TD AI dashboard: /admin');
 

@@ -40,6 +40,16 @@ import {
 import { runWithUsageUser } from './usageContext.js';
 import { getUserPersonalization } from './userPersonalization.js';
 import { translateText } from '../providers/translator.js';
+import {
+  enqueueMusic as enqueueGuildMusic,
+  musicQueue as guildMusicQueue,
+  pauseMusic as pauseGuildMusic,
+  resumeMusic as resumeGuildMusic,
+  skipMusic as skipGuildMusic,
+  stopMusic as stopGuildMusic,
+  type MusicQueueSnapshot,
+  type MusicTrack
+} from './musicEngine.js';
 
 const require = createRequire(import.meta.url);
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -56,6 +66,13 @@ type LiveSessionLike = {
       parts: Array<{ text: string }>;
     }>;
     turnComplete?: boolean;
+  }): void;
+  sendToolResponse(params: {
+    functionResponses: Array<{
+      id?: string;
+      name: string;
+      response: Record<string, unknown>;
+    }>;
   }): void;
   close(): void;
 };
@@ -115,6 +132,7 @@ interface VoiceAiSession {
   liveModelIndex?: number;
   liveModel?: string;
   liveReconnecting?: boolean;
+  musicActive: boolean;
 }
 
 const sessions = new Map<string, VoiceAiSession>();
@@ -136,6 +154,125 @@ function errorMessage(error: unknown): string {
 function sleep(ms: number): Promise<void> {
   if (ms <= 0) return Promise.resolve();
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeMusicCommand(text: string): string {
+  return text
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[،,.!?؟]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractMusicPlayQuery(text: string): string | undefined {
+  const raw = text.trim();
+  if (!raw) return undefined;
+
+  const patterns = [
+    /^(?:شغل(?:لي|لنا)?|شغلي|شغلنا|حط(?:لي|لنا)?|حطلي|اسمعني)\s+(?:اغنيه|اغنية|موسيقى|تراك|song|music)?\s*(.+)$/iu,
+    /^(?:play|play me|put on|queue)\s+(?:song\s+|music\s+)?(.+)$/iu
+  ];
+
+  for (const pattern of patterns) {
+    const match = raw.match(pattern);
+    const query = match?.[1]?.trim();
+    if (query && query.length >= 2) return query;
+  }
+
+  return undefined;
+}
+
+function musicControlAction(text: string):
+  | 'pause'
+  | 'resume'
+  | 'skip'
+  | 'stop'
+  | undefined {
+  const value = normalizeMusicCommand(text);
+
+  if (/^(?:pause|بوز|وقف مؤقت|وقف شويه|وقف شوية)$/iu.test(value)) return 'pause';
+  if (/^(?:resume|continue|كمل|كمل الاغنيه|كمل الأغنية|كمل الموسيقى)$/iu.test(value)) return 'resume';
+  if (/^(?:skip|next|next song|اللي بعدها|الي بعدها|عدي|عدي الاغنيه|عدي الأغنية)$/iu.test(value)) return 'skip';
+  if (/^(?:stop music|stop song|اقفل الاغنيه|اقفل الأغنية|وقف الاغنيه|وقف الأغنية|اقفل الموسيقى|وقف الموسيقى)$/iu.test(value)) return 'stop';
+
+  return undefined;
+}
+
+function musicHooks(session: VoiceAiSession) {
+  return {
+    onActiveChange: (active: boolean) => {
+      const current = sessions.get(session.guildId);
+      if (current === session) current.musicActive = active;
+    },
+    onTrackStart: (track: MusicTrack) => {
+      console.log(`TD Music started in guild ${session.guildId}: ${track.title}`);
+    },
+    onError: (error: Error) => {
+      console.error('TD Music playback error:', error);
+      void notifyUser(session.userId, `❌ **TD Music:** ${error.message}`);
+    }
+  };
+}
+
+async function playMusicForSession(
+  session: VoiceAiSession,
+  requesterId: string,
+  query: string,
+  replaceCurrent = false
+): Promise<{ track: MusicTrack; position: number; started: boolean }> {
+  if (!canListenToSpeaker(session, requesterId)) {
+    throw new Error('Join the same voice channel as TD AI first.');
+  }
+
+  if (replaceCurrent && session.musicActive) {
+    stopGuildMusic(session.guildId);
+    session.musicActive = false;
+  }
+
+  stopPlayback(session);
+  session.busy = false;
+  session.musicActive = true;
+
+  try {
+    return await enqueueGuildMusic(
+      session.guildId,
+      session.player,
+      query,
+      requesterId,
+      musicHooks(session)
+    );
+  } catch (error) {
+    session.musicActive = Boolean(guildMusicQueue(session.guildId).current);
+    throw error;
+  }
+}
+
+async function handleMusicControlText(
+  session: VoiceAiSession,
+  speakerId: string,
+  transcript: string
+): Promise<boolean> {
+  const playQuery = extractMusicPlayQuery(transcript);
+  if (playQuery) {
+    await playMusicForSession(session, speakerId, playQuery, true);
+    return true;
+  }
+
+  const action = musicControlAction(transcript);
+  if (!action) return false;
+
+  switch (action) {
+    case 'pause': pauseGuildMusic(session.guildId); break;
+    case 'resume': resumeGuildMusic(session.guildId); break;
+    case 'skip': skipGuildMusic(session.guildId); break;
+    case 'stop':
+      stopGuildMusic(session.guildId);
+      session.musicActive = false;
+      break;
+  }
+
+  return true;
 }
 
 async function notifyUser(userId: string, text: string): Promise<void> {
@@ -405,6 +542,9 @@ function languageSystemInstruction(
     'Inputs beginning with [TD_HOST] are trusted host action results. Speak only the requested acknowledgement or usage result and do not question whether the action happened.',
     'The host may send text transcripts instead of raw audio when wake-word mode is enabled. Treat that transcript exactly as the current speaker turn.',
     'Inputs beginning with [TD_ACCEPTED] are already authorized by the host wake gate. Answer them normally and ignore the marker.',
+    'When the speaker asks you to play a song, track, music, or a supplied media link, call the play_music tool instead of pretending to play it.',
+    'Use pause_music, resume_music, skip_music, and stop_music for explicit music-control requests.',
+    'After a successful music tool call, keep any spoken acknowledgement extremely short because playback will start immediately.',
     'If interrupted, stop speaking and listen.'
   ];
 
@@ -1356,7 +1496,125 @@ function attachWakeGatedLiveReceiver(
   );
 }
 
+type LiveFunctionCall = {
+  id?: string;
+  name?: string;
+  args?: Record<string, unknown>;
+};
+
+function toolStringArg(
+  call: LiveFunctionCall,
+  key: string
+): string | undefined {
+  const value = call.args?.[key];
+  return typeof value === 'string' && value.trim()
+    ? value.trim()
+    : undefined;
+}
+
+async function handleLiveMusicToolCalls(
+  session: VoiceAiSession,
+  calls: LiveFunctionCall[]
+): Promise<void> {
+  const speakerId = session.lastSpeakerId ?? session.userId;
+  const responses: Array<{
+    id?: string;
+    name: string;
+    response: Record<string, unknown>;
+  }> = [];
+
+  for (const call of calls) {
+    const name = call.name ?? '';
+
+    try {
+      if (name === 'play_music') {
+        const query = toolStringArg(call, 'query');
+        if (!query) throw new Error('Song name or link is required.');
+        const result = await playMusicForSession(
+          session,
+          speakerId,
+          query,
+          true
+        );
+        responses.push({
+          id: call.id,
+          name,
+          response: {
+            ok: true,
+            title: result.track.title,
+            playing: true
+          }
+        });
+        continue;
+      }
+
+      if (name === 'pause_music') {
+        const ok = pauseGuildMusic(session.guildId);
+        responses.push({ id: call.id, name, response: { ok, paused: ok } });
+        continue;
+      }
+
+      if (name === 'resume_music') {
+        const ok = resumeGuildMusic(session.guildId);
+        responses.push({ id: call.id, name, response: { ok, resumed: ok } });
+        continue;
+      }
+
+      if (name === 'skip_music') {
+        const ok = skipGuildMusic(session.guildId);
+        responses.push({ id: call.id, name, response: { ok, skipped: ok } });
+        continue;
+      }
+
+      if (name === 'stop_music') {
+        const ok = stopGuildMusic(session.guildId);
+        session.musicActive = false;
+        responses.push({ id: call.id, name, response: { ok, stopped: ok } });
+        continue;
+      }
+
+      responses.push({
+        id: call.id,
+        name: name || 'unknown_tool',
+        response: { ok: false, error: 'Unknown music tool.' }
+      });
+    } catch (error) {
+      responses.push({
+        id: call.id,
+        name: name || 'music_tool',
+        response: {
+          ok: false,
+          error: errorMessage(error)
+        }
+      });
+    }
+  }
+
+  if (responses.length) {
+    try {
+      session.live?.sendToolResponse({ functionResponses: responses });
+    } catch (error) {
+      console.error('Gemini Live music tool response failed:', error);
+    }
+  }
+}
+
 function handleLiveMessage(session: VoiceAiSession, message: LiveServerMessage): void {
+  const toolCall = (
+    message as LiveServerMessage & {
+      toolCall?: { functionCalls?: LiveFunctionCall[] };
+    }
+  ).toolCall;
+
+  if (toolCall?.functionCalls?.length) {
+    void handleLiveMusicToolCalls(
+      session,
+      toolCall.functionCalls
+    ).catch((error) => {
+      console.error('Gemini Live music tool call failed:', error);
+    });
+  }
+
   const content = message.serverContent;
   if (!content) return;
 
@@ -1839,6 +2097,44 @@ async function openGeminiLiveModel(
       }
     },
     config: {
+      tools: [{
+        functionDeclarations: [
+          {
+            name: 'play_music',
+            description: 'Play a song, music track, or public media link in the current Discord voice channel. Use this whenever the speaker asks to play music by name or URL.',
+            parametersJsonSchema: {
+              type: 'object',
+              properties: {
+                query: {
+                  type: 'string',
+                  description: 'Song name, artist + title, search phrase, or public media URL.'
+                }
+              },
+              required: ['query']
+            }
+          },
+          {
+            name: 'pause_music',
+            description: 'Pause the currently playing music.',
+            parametersJsonSchema: { type: 'object', properties: {} }
+          },
+          {
+            name: 'resume_music',
+            description: 'Resume paused music.',
+            parametersJsonSchema: { type: 'object', properties: {} }
+          },
+          {
+            name: 'skip_music',
+            description: 'Skip the current music track and play the next queued track.',
+            parametersJsonSchema: { type: 'object', properties: {} }
+          },
+          {
+            name: 'stop_music',
+            description: 'Stop music playback and clear the queue.',
+            parametersJsonSchema: { type: 'object', properties: {} }
+          }
+        ]
+      }],
       responseModalities: [Modality.AUDIO],
       systemInstruction: {
         parts: [{
@@ -1967,6 +2263,101 @@ async function connectGeminiLive(session: VoiceAiSession): Promise<void> {
   throw new Error(`All Live Voice models are unavailable. ${errors.slice(-2).join(' | ')}`);
 }
 
+async function processMusicControlUtterance(
+  session: VoiceAiSession,
+  speakerId: string,
+  chunks: Buffer[]
+): Promise<void> {
+  if (!chunks.length || !sttConfigured()) return;
+
+  const pcm = Buffer.concat(chunks);
+  if (pcm.byteLength < 18_000) return;
+
+  try {
+    const transcript = await transcribeAudioBytes(
+      pcmToWav(pcm),
+      'td-music-control.wav',
+      'audio/wav'
+    );
+
+    const text = transcript.text.trim();
+    if (!text) return;
+
+    const handled = await handleMusicControlText(
+      session,
+      speakerId,
+      text
+    );
+
+    if (handled) {
+      console.log(
+        `TD Music voice control (${speakerId}): ${text}`
+      );
+    }
+  } catch (error) {
+    console.warn('TD Music voice control STT failed:', errorMessage(error));
+  }
+}
+
+function captureMusicControlUtterance(
+  session: VoiceAiSession,
+  speakerId: string
+): void {
+  if (session.capturing || !sttConfigured()) return;
+
+  const receiver = session.connection.receiver;
+  session.capturing = true;
+  session.activeSpeakerId = speakerId;
+  session.lastSpeakerId = speakerId;
+  session.participantIds.add(speakerId);
+
+  const opusStream = receiver.subscribe(speakerId, {
+    end: {
+      behavior: EndBehaviorType.AfterSilence,
+      duration: Math.max(450, session.silenceMs)
+    }
+  });
+
+  const decoder = new OpusScript(
+    48_000,
+    2,
+    OpusScript.Application.AUDIO
+  );
+  const chunks: Buffer[] = [];
+  let finalized = false;
+
+  const timer = setTimeout(
+    () => opusStream.destroy(),
+    Math.min(12, env.VOICE_AI_MAX_UTTERANCE_SECONDS) * 1000
+  );
+
+  const finalize = () => {
+    if (finalized) return;
+    finalized = true;
+    clearTimeout(timer);
+    session.capturing = false;
+    session.activeSpeakerId = undefined;
+    try { decoder.delete(); } catch { /* no-op */ }
+    void processMusicControlUtterance(session, speakerId, chunks);
+  };
+
+  opusStream.on('data', (packet: Buffer) => {
+    try {
+      const decoded = decoder.decode(packet);
+      if (decoded?.byteLength) chunks.push(Buffer.from(decoded));
+    } catch (error) {
+      console.error('TD Music control decode error:', error);
+    }
+  });
+
+  opusStream.once('end', finalize);
+  opusStream.once('close', finalize);
+  opusStream.once('error', (error) => {
+    console.error('TD Music control receive error:', error.message);
+    finalize();
+  });
+}
+
 function attachLiveReceiver(session: VoiceAiSession): void {
   const receiver = session.connection.receiver;
 
@@ -1983,6 +2374,11 @@ function attachLiveReceiver(session: VoiceAiSession): void {
     }
 
     if (session.capturing) return;
+
+    if (session.musicActive) {
+      captureMusicControlUtterance(session, speakerId);
+      return;
+    }
 
     if (session.player.state.status !== AudioPlayerStatus.Idle) {
       stopPlayback(session);
@@ -2071,6 +2467,7 @@ async function createSession(
 
   const existing = sessions.get(guildId);
   if (existing) {
+    stopGuildMusic(guildId);
     stopPlayback(existing);
     existing.live?.close();
     for (const item of existing.translationLives ?? []) item.live.close();
@@ -2160,7 +2557,8 @@ async function createSession(
     voiceName: personal.voiceName,
     responseDelayMs: personal.responseDelayMs,
     followupSpeaker:
-      control.followupSpeaker
+      control.followupSpeaker,
+    musicActive: false
   };
 
   sessions.set(guildId, session);
@@ -2198,6 +2596,7 @@ async function createSession(
     }
   } catch (error) {
     sessions.delete(guildId);
+    stopGuildMusic(guildId);
     stopPlayback(session);
     session.live?.close();
     for (const item of session.translationLives ?? []) item.live.close();
@@ -2210,6 +2609,7 @@ async function createSession(
     const current = sessions.get(guildId);
     if (current === session) {
       sessions.delete(guildId);
+      stopGuildMusic(guildId);
       session.live?.close();
       for (const item of session.translationLives ?? []) item.live.close();
       stopPlayback(session);
@@ -2294,6 +2694,7 @@ export function leaveVoiceAi(guildId: string, requesterId?: string): boolean {
   }
 
   sessions.delete(guildId);
+  stopGuildMusic(guildId);
   stopPlayback(session);
   session.live?.close();
   for (const item of session.translationLives ?? []) item.live.close();
@@ -2335,9 +2736,61 @@ export async function reconnectVoiceAi(
 export function skipVoiceAi(guildId: string): boolean {
   const session = sessions.get(guildId);
   if (!session) return false;
+
+  if (session.musicActive) {
+    return skipGuildMusic(guildId);
+  }
+
   stopPlayback(session);
   session.busy = false;
   return true;
+}
+
+export async function playVoiceMusic(
+  guildId: string,
+  requesterId: string,
+  query: string
+): Promise<{ track: MusicTrack; position: number; started: boolean }> {
+  let session = sessions.get(guildId);
+
+  if (!session) {
+    await joinVoiceAi(guildId, requesterId, 'auto');
+    session = sessions.get(guildId);
+  }
+
+  if (!session) {
+    throw new Error('TD AI could not create a voice session for music.');
+  }
+
+  return playMusicForSession(
+    session,
+    requesterId,
+    query,
+    false
+  );
+}
+
+export function pauseVoiceMusic(guildId: string): boolean {
+  return pauseGuildMusic(guildId);
+}
+
+export function resumeVoiceMusic(guildId: string): boolean {
+  return resumeGuildMusic(guildId);
+}
+
+export function skipVoiceMusic(guildId: string): boolean {
+  return skipGuildMusic(guildId);
+}
+
+export function stopVoiceMusic(guildId: string): boolean {
+  const session = sessions.get(guildId);
+  const stopped = stopGuildMusic(guildId);
+  if (session) session.musicActive = false;
+  return stopped;
+}
+
+export function voiceMusicQueue(guildId: string): MusicQueueSnapshot {
+  return guildMusicQueue(guildId);
 }
 
 export async function writeVoiceChat(
@@ -2384,6 +2837,7 @@ export function voiceAiStatus(guildId: string) {
     awakeUntil: session.awakeUntil || undefined,
     awakeSpeakerId: session.awakeSpeakerId,
     voiceName: session.voiceName,
-    responseDelayMs: session.responseDelayMs
+    responseDelayMs: session.responseDelayMs,
+    music: guildMusicQueue(guildId)
   };
 }
