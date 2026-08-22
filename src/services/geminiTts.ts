@@ -1,6 +1,10 @@
 import { env } from '../config.js';
 import { languageInstruction, normalizeLanguage } from '../languages.js';
-import { getGeminiTaskRoute, getVoiceRuntimeSettings } from './runtimeConfig.js';
+import {
+  getGeminiTaskRoute,
+  getVoiceRuntimeSettings,
+  parseModelChain
+} from './runtimeConfig.js';
 import { getVoiceControlSettings } from './voiceControl.js';
 import { currentUsageUserId } from './usageContext.js';
 import { getUserPersonalization } from './userPersonalization.js';
@@ -10,35 +14,14 @@ export type GeneratedSpeech = {
   filename: string;
   contentType: string;
   data: Uint8Array<ArrayBufferLike>;
-};
-
-type StreamAudioDelta = {
-  type?: string;
-  data?: string;
-  mime_type?: string;
-  sample_rate?: number;
-  channels?: number;
-};
-
-type StreamEvent = {
-  event_type?: string;
-  eventType?: string;
-  delta?: StreamAudioDelta & {
-    mimeType?: string;
-    sampleRate?: number;
-  };
-  error?: {
-    code?: string;
-    message?: string;
-  };
-  status?: string;
+  model?: string;
 };
 
 export function geminiTtsConfigured(): boolean {
   return Boolean(
-    (env.GEMINI_TTS_API_KEY ?? env.AI_API_KEY) &&
-    env.GEMINI_TTS_MODEL &&
-    env.GEMINI_TTS_VOICE
+    env.GEMINI_TTS_API_KEY ??
+    env.GEMINI_LIVE_API_KEY ??
+    env.AI_API_KEY
   );
 }
 
@@ -51,15 +34,12 @@ function pronunciationInstruction(language: string, humanLike: boolean): string 
   if (normalized === 'ar-eg') {
     return `Read the text exactly in natural Egyptian Arabic with a clear conversational Egyptian accent. Keep English names readable. Do not translate, summarize, or paraphrase it. ${delivery}`;
   }
-
   if (normalized === 'ar-msa') {
     return `Read the text exactly in clear Modern Standard Arabic with natural neutral Arabic pronunciation. Keep English names readable. Do not translate, summarize, or paraphrase it. ${delivery}`;
   }
-
   if (normalized === 'fa') {
     return `Read the text exactly in natural Persian (Farsi) with clear pronunciation. Do not translate, summarize, or paraphrase it. ${delivery}`;
   }
-
   return `Read the text exactly in ${languageInstruction(language)} with clear natural pronunciation. Do not translate, summarize, or paraphrase it. ${delivery}`;
 }
 
@@ -90,43 +70,94 @@ function pcm16ToWav(
   return new Uint8Array(Buffer.concat([header, Buffer.from(pcm)]));
 }
 
-function parseStreamLine(line: string): StreamEvent | undefined {
-  const trimmed = line.trim();
-  if (!trimmed || trimmed.startsWith(':') || trimmed.startsWith('event:')) {
-    return undefined;
+function statusOf(error: unknown): number | undefined {
+  if (error && typeof error === 'object' && 'status' in error) {
+    const value = Number((error as { status?: unknown }).status);
+    if (Number.isFinite(value)) return value;
   }
-
-  const payload = trimmed.startsWith('data:')
-    ? trimmed.slice(5).trim()
-    : trimmed;
-
-  if (!payload || payload === '[DONE]') return undefined;
-
-  try {
-    return JSON.parse(payload) as StreamEvent;
-  } catch {
-    return undefined;
-  }
+  const message = error instanceof Error ? error.message : String(error);
+  const match = message.match(/(?:^|\D)(4\d\d|5\d\d)(?:\D|$)/);
+  return match?.[1] ? Number(match[1]) : undefined;
 }
 
-function audioFileInfo(mimeType: string) {
-  switch (mimeType) {
-    case 'audio/mp3':
-    case 'audio/mpeg':
-      return { filename: 'td-ai-listen.mp3', contentType: 'audio/mpeg' };
-    case 'audio/ogg':
-    case 'audio/ogg_opus':
-    case 'audio/opus':
-      return { filename: 'td-ai-listen.ogg', contentType: 'audio/ogg' };
-    case 'audio/aac':
-      return { filename: 'td-ai-listen.aac', contentType: 'audio/aac' };
-    case 'audio/flac':
-      return { filename: 'td-ai-listen.flac', contentType: 'audio/flac' };
-    case 'audio/m4a':
-      return { filename: 'td-ai-listen.m4a', contentType: 'audio/mp4' };
-    default:
-      return { filename: 'td-ai-listen.wav', contentType: 'audio/wav' };
+function extractAudio(raw: string): {
+  data: Buffer;
+  mimeType: string;
+} | undefined {
+  const parsed = JSON.parse(raw) as {
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{
+          inlineData?: {
+            data?: string;
+            mimeType?: string;
+          };
+        }>;
+      };
+    }>;
+  };
+
+  for (const candidate of parsed.candidates ?? []) {
+    for (const part of candidate.content?.parts ?? []) {
+      if (part.inlineData?.data) {
+        return {
+          data: Buffer.from(part.inlineData.data, 'base64'),
+          mimeType: part.inlineData.mimeType ?? 'audio/L16;codec=pcm;rate=24000'
+        };
+      }
+    }
   }
+
+  return undefined;
+}
+
+async function requestSpeech(
+  apiKey: string,
+  model: string,
+  text: string,
+  voiceName: string
+): Promise<{ data: Buffer; mimeType: string }> {
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+    {
+      method: 'POST',
+      headers: {
+        'x-goog-api-key': apiKey,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        contents: [{
+          role: 'user',
+          parts: [{ text }]
+        }],
+        generationConfig: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName
+              }
+            }
+          }
+        }
+      }),
+      signal: AbortSignal.timeout(env.TTS_REQUEST_TIMEOUT_MS)
+    }
+  );
+
+  const raw = await response.text();
+  if (!response.ok) {
+    throw Object.assign(
+      new Error(`Gemini TTS ${response.status}: ${raw.slice(0, 450)}`),
+      { status: response.status }
+    );
+  }
+
+  const audio = extractAudio(raw);
+  if (!audio?.data.byteLength) {
+    throw new Error(`${model} returned no audio data.`);
+  }
+  return audio;
 }
 
 export async function generateGeminiSpeech(
@@ -150,153 +181,62 @@ export async function generateGeminiSpeech(
     );
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), env.TTS_REQUEST_TIMEOUT_MS);
+  const input = `${pronunciationInstruction(language, control.humanLikeMode)}\n\nText to read:\n${cleanText}`;
+  const models = parseModelChain(route.model);
+  const errors: string[] = [];
 
-  try {
-    const response = await fetch(
-      'https://generativelanguage.googleapis.com/v1beta/interactions?alt=sse',
-      {
-        method: 'POST',
-        headers: {
-          'x-goog-api-key': route.apiKey,
-          'content-type': 'application/json',
-          accept: 'text/event-stream',
-          'Api-Revision': '2026-05-20'
-        },
-        body: JSON.stringify({
-          model: route.model,
-          input: `${pronunciationInstruction(language, control.humanLikeMode)}\n\nText to read:\n${cleanText}`,
-          response_format: {
-            type: 'audio',
-            delivery: 'inline',
-            mime_type: 'audio/l16'
-          },
-          generation_config: {
-            speech_config: [{ voice: selectedVoice }]
-          },
-          stream: true
-        }),
-        signal: controller.signal
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error(
-        `Gemini TTS error ${response.status}: ${(await response.text()).slice(0, 500)}`
+  for (const model of models) {
+    try {
+      const audio = await requestSpeech(
+        route.apiKey,
+        model,
+        input,
+        selectedVoice
       );
-    }
 
-    if (!response.body) {
-      throw new Error('Gemini TTS returned an empty streaming response.');
-    }
+      const approximateSeconds = Math.max(0.5, audio.data.byteLength / (24_000 * 2));
+      await recordUsage(
+        usageUserId,
+        'tts',
+        estimateAudioCredits(approximateSeconds, 5)
+      ).catch(() => undefined);
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let pending = '';
-    const chunks: Buffer[] = [];
-    let mimeType = 'audio/l16';
-    let sampleRate = 24_000;
-    let channels = 1;
-
-    const seenEvents = new Set<string>();
-    let streamError: string | undefined;
-
-    const consume = (line: string) => {
-      const event = parseStreamLine(line);
-      if (!event) return;
-
-      const eventType = event.event_type ?? event.eventType ?? 'unknown';
-      seenEvents.add(eventType);
-
-      if (eventType === 'error') {
-        streamError = event.error?.message
-          ?? event.error?.code
-          ?? 'Gemini Interactions stream returned an error event.';
-        return;
+      // Gemini TTS generateContent returns raw PCM L16. Wrap it in WAV so
+      // Discord/ffmpeg can decode it consistently.
+      if (/audio\/(?:l16|pcm)/i.test(audio.mimeType)) {
+        return {
+          filename: 'td-ai-listen.wav',
+          contentType: 'audio/wav',
+          data: pcm16ToWav(audio.data),
+          model
+        };
       }
 
-      if (
-        eventType === 'interaction.status_update' &&
-        event.status === 'failed'
-      ) {
-        streamError = 'Gemini TTS interaction failed before audio was generated.';
-        return;
-      }
-
-      const delta = event.delta;
-      if (
-        eventType !== 'step.delta' ||
-        delta?.type !== 'audio' ||
-        !delta.data
-      ) {
-        return;
-      }
-
-      chunks.push(Buffer.from(delta.data, 'base64'));
-      mimeType = delta.mime_type ?? delta.mimeType ?? mimeType;
-      sampleRate = delta.sample_rate ?? delta.sampleRate ?? sampleRate;
-      channels = delta.channels ?? channels;
-    };
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      pending += decoder.decode(value, { stream: true });
-      const lines = pending.split(/\r?\n/);
-      pending = lines.pop() ?? '';
-
-      for (const line of lines) {
-        consume(line);
-      }
-    }
-
-    // Flush any remaining UTF-8 decoder state before parsing the final event.
-    pending += decoder.decode();
-    if (pending.trim()) consume(pending);
-
-    if (streamError) {
-      throw new Error(`Gemini TTS stream error: ${streamError}`);
-    }
-
-    if (!chunks.length) {
-      const contentType = response.headers.get('content-type') ?? 'unknown';
-      const events = [...seenEvents].join(', ') || 'none';
-      throw new Error(
-        `Gemini TTS returned no audio chunks. Content-Type: ${contentType}. Events: ${events}.`
-      );
-    }
-
-    const data = Buffer.concat(chunks);
-    const approximateSeconds = mimeType === 'audio/l16'
-      ? data.byteLength / Math.max(1, sampleRate * channels * 2)
-      : Math.max(0.5, cleanText.length / 14);
-
-    await recordUsage(
-      currentUsageUserId(),
-      'tts',
-      estimateAudioCredits(approximateSeconds, 5)
-    ).catch(() => undefined);
-
-    if (mimeType === 'audio/l16') {
+      const extension = audio.mimeType.includes('mpeg') ? 'mp3' : 'wav';
       return {
-        filename: 'td-ai-listen.wav',
-        contentType: 'audio/wav',
-        data: pcm16ToWav(data, sampleRate, channels)
+        filename: `td-ai-listen.${extension}`,
+        contentType: audio.mimeType,
+        data: new Uint8Array(audio.data),
+        model
       };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const status = statusOf(error);
+      errors.push(`${model}: ${message}`);
+      console.warn(`TTS model failed (${model}); trying fallback.`, error);
+      if (status === 401) break;
     }
-
-    return {
-      ...audioFileInfo(mimeType),
-      data: new Uint8Array(data)
-    };
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Gemini TTS took too long. Try again or use a shorter selection.');
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  if (errors.some((entry) => /429|RESOURCE_EXHAUSTED|quota/i.test(entry))) {
+    throw new Error('Gemini TTS quota is temporarily exhausted. TD AI tried the configured TTS fallback models.');
+  }
+
+  if (errors.some((entry) => /AbortError|timeout|timed out|aborted/i.test(entry))) {
+    throw new Error('Gemini TTS timed out after trying the configured fallback models. Try a shorter response.');
+  }
+
+  throw new Error(
+    `Gemini TTS failed on all configured models. ${errors.slice(-2).join(' | ')}`
+  );
 }

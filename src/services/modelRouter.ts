@@ -20,6 +20,26 @@ export type ModelMessage = {
 };
 
 const SAME_MODEL_RETRY_MS = 450;
+const MODEL_COOLDOWNS = new Map<string, number>();
+
+function cooldownKey(provider: string, model: string): string {
+  return `${provider}::${model}`;
+}
+
+function modelCoolingDown(provider: string, model: string): boolean {
+  const key = cooldownKey(provider, model);
+  const until = MODEL_COOLDOWNS.get(key) ?? 0;
+  if (until <= Date.now()) {
+    if (until) MODEL_COOLDOWNS.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function coolDownModel(provider: string, model: string, status?: number): void {
+  const ms = status === 429 ? 60_000 : status === 503 ? 20_000 : status === 404 ? 10 * 60_000 : 0;
+  if (ms > 0) MODEL_COOLDOWNS.set(cooldownKey(provider, model), Date.now() + ms);
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -272,6 +292,11 @@ export async function callTextModel(
   const inputChars = messages.reduce((sum, message) => sum + message.content.length, 0);
 
   for (const model of models) {
+    if (modelCoolingDown(route.providerName, model)) {
+      console.log(`AI model cooldown skip: ${task} -> ${route.providerName}/${model}`);
+      continue;
+    }
+
     let transientRetries = 0;
 
     while (true) {
@@ -334,6 +359,8 @@ export async function callTextModel(
           status,
           message
         }).catch(() => undefined);
+
+        coolDownModel(route.providerName, model, status);
 
         if (status === 429 || status === 503) {
           console.warn(`AI model unavailable (${status}): ${model}. Trying fallback model...`);

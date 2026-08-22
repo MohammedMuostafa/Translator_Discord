@@ -1,0 +1,72 @@
+{
+  "version": "3.15.0",
+  "repository": "MohammedMuostafa/Translator_Discord",
+  "package_type": "repo-root patch",
+  "files": [
+    {
+      "path": "docs/guides/V3.15-STABILITY-ROUTING-MEDIA-VOICE-AR.md",
+      "bytes": 7102,
+      "sha256": "bb28b7a9e993c5c138285288d34718c8d4f006b22616ccd829a8b056ce76a0cb"
+    },
+    {
+      "path": "package.json",
+      "bytes": 749,
+      "sha256": "348467caf6eb9b7b6b7166c896c3d9168437e1d86f697277680bf25066754034"
+    },
+    {
+      "path": "src/adminDashboard.ts",
+      "bytes": 73060,
+      "sha256": "b4824e61f632d26313eb0ddfdf54a4c2f9d158a36876f484f3e0adedbfe7f801"
+    },
+    {
+      "path": "src/index.ts",
+      "bytes": 10951,
+      "sha256": "94a67d917e8ff690135e714165868e35803e433463f6a747f2a0d719a370c86e"
+    },
+    {
+      "path": "src/services/geminiTts.ts",
+      "bytes": 7795,
+      "sha256": "f9695e4c2c6dc0a5f0a0ca87b9631d088a08c0cf054fdf0313c08a4384b03e86"
+    },
+    {
+      "path": "src/services/mediaGeneration.ts",
+      "bytes": 10442,
+      "sha256": "4861ff183f046241c3d2a60d56c9546d23969fe8b6f1591d5e9c4877b6dfd9de"
+    },
+    {
+      "path": "src/services/modelCatalog.ts",
+      "bytes": 10160,
+      "sha256": "aa200da445723269d718a97b404f7a58c57cec9f080408a8eb4e15c3d65dd1ec"
+    },
+    {
+      "path": "src/services/modelRouter.ts",
+      "bytes": 10795,
+      "sha256": "342f3e6a50923218336e608dcea1e81a236508c269bc46734dfbc665a6a1231d"
+    },
+    {
+      "path": "src/services/runtimeConfig.ts",
+      "bytes": 20969,
+      "sha256": "03773eb186aaafc74e8fe4e9b44057489118715d4e5317ecfa52a071f7c25051"
+    },
+    {
+      "path": "src/services/stt.ts",
+      "bytes": 8031,
+      "sha256": "550b95be63b78b7138a0d464912e5c6d5342b555b6e38b4c0a91fc5cb17096a4"
+    },
+    {
+      "path": "src/services/voiceAi.ts",
+      "bytes": 66826,
+      "sha256": "a88b936b84ece42f0184f984a43dd158c50b882ea16f7884211aa47646c45082"
+    },
+    {
+      "path": "src/services/voiceControl.ts",
+      "bytes": 4348,
+      "sha256": "e94fef26733d1debab140f985176b21b207a5324bbcb6d2a2a77468020dcc970"
+    },
+    {
+      "path": "src/voiceHandlers.ts",
+      "bytes": 9630,
+      "sha256": "2bc7fb3b6ab8cde4ffd11f9c9462c7ce02c883c342986fbc4bd481ff579737b1"
+    }
+  ]
+}

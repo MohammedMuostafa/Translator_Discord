@@ -51,7 +51,7 @@ registerAdminDashboard(app);
 const statusPayload = () => ({
   ok: true,
   service: 'td-ai',
-  version: '3.14.0',
+  version: '3.15.0',
   interactionEndpoint: '/interactions',
   adminDashboard: '/admin',
   translationProvider: env.TRANSLATION_PROVIDER,
@@ -64,11 +64,13 @@ const statusPayload = () => ({
   interactiveDmChat: gatewayChatConfigured(),
   chatSessionTtlMinutes: env.CHAT_SESSION_TTL_MINUTES,
   liveVoiceAi: voiceAiConfigured(),
-  voiceWakeMode: true,
-  wakeGatedGeminiLive: true,
+  voiceWakeMode: false,
+  alwaysListeningVoice: true,
   perUserPersonalization: true,
   separatedUserAdminDashboard: true,
   liveVoiceTranslation: true,
+  nativeAudioLiveTranslation: true,
+  managedModelChains: true,
   voiceChatWrite: true,
   voiceSkip: true,
   voiceReconnect: true,
@@ -367,7 +369,7 @@ app.post(
 );
 
 app.listen(env.PORT, env.HOST, () => {
-  console.log(`TD AI v3.14 listening on ${env.HOST}:${env.PORT}`);
+  console.log(`TD AI v3.15 listening on ${env.HOST}:${env.PORT}`);
   console.log('Interactions endpoint: /interactions');
   console.log('TD AI dashboard: /admin');
 

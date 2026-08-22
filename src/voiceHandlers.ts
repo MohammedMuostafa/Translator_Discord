@@ -14,7 +14,6 @@ import {
   writeVoiceChat
 } from './services/voiceAi.js';
 import {
-  getVoiceControlSettings,
   type TranslationOutput,
   type TranslationQuality
 } from './services/voiceControl.js';
@@ -51,19 +50,16 @@ export function handleVoiceChatCommand(interaction: DiscordInteraction): void {
       if (action === 'join') {
         const language = (nestedString(subcommand, 'language') ?? 'auto') as ChatResponseLanguage;
         const joined = await joinVoiceAi(guildId, userId, language);
-        const control = await getVoiceControlSettings();
 
         await editOriginalResponse(interaction.application_id, interaction.token, {
           content: [
             '🎙️ **TD AI joined your voice channel.**',
             `Channel: **${joined.channelName}**`,
             `Language: **${chatLanguageLabel(language)}**`,
-            `Engine: **${joined.mode === 'live' ? 'Gemini Live' : 'Wake-gated Cascade'}**`,
-            `Activation: **${control.activationMode === 'wake-word' ? `Wake word — ${control.wakeWords.join(', ')}` : 'Always listening'}**`,
+            `Engine: **${joined.mode === 'live' ? 'Gemini Live' : 'Cascade fallback'}**`,
+            'Activation: **Always listening**',
             '',
-            control.activationMode === 'wake-word'
-              ? `Say **${control.wakeWords[0] ?? 'TD'}** before your request. After each answer you have about ${Math.round(control.followupWindowMs / 1000)} seconds for a follow-up without saying the wake word again.`
-              : 'Talk normally. TD AI responds to the current speaker.',
+            'Talk normally. No wake word is required; TD AI responds to allowed human speakers in the channel.',
             '',
             '👥 Human members in the same voice channel can talk to TD AI.',
             'Use `/voicechat write`, `/voicechat skip`, `/voicechat reconnect`, `/voicechat translate`, or `/voicechat usage` for deterministic controls.'
@@ -93,8 +89,9 @@ export function handleVoiceChatCommand(interaction: DiscordInteraction): void {
             `Languages: **${started.translation.languageA} ⇄ ${started.translation.languageB}**`,
             `Output: **${started.translation.output}**`,
             `Quality: **${started.translation.quality}**`,
+            `Engine: **${started.mode === 'translate-live' ? 'Gemini 3.5 Live Translate — direct audio → audio' : 'STT → translation → TTS fallback'}**`,
             '',
-            'Wake word is disabled while Live Translation is active so both sides can speak naturally.',
+            'Both sides can speak naturally. Native Live Translate streams translated audio directly for lower latency.',
             'Use `/voicechat translate-stop` to return to AI conversation mode.'
           ].join('\n'),
           allowed_mentions: { parse: [] }
@@ -183,7 +180,6 @@ export function handleVoiceChatCommand(interaction: DiscordInteraction): void {
 
       if (action === 'status') {
         const status = voiceAiStatus(guildId);
-        const control = await getVoiceControlSettings();
 
         await editOriginalResponse(interaction.application_id, interaction.token, {
           content: status.active
@@ -196,10 +192,7 @@ export function handleVoiceChatCommand(interaction: DiscordInteraction): void {
                 `Owner: <@${status.userId}>`,
                 `Speaker access: **${status.speakerAccess === 'everyone' ? 'Everyone in channel' : 'Owner only'}**`,
                 `Participants heard: **${status.participantCount ?? 0}**`,
-                `Activation: **${status.purpose === 'translation' ? 'Continuous translation' : control.activationMode}**`,
-                status.purpose === 'conversation'
-                  ? `Wake state: **${status.awake ? 'Awake / follow-up window' : 'Sleeping'}**`
-                  : '',
+                `Activation: **${status.purpose === 'translation' ? 'Continuous translation' : 'Always listening'}**`,
                 status.translation
                   ? `Translation: **${status.translation.languageA} ⇄ ${status.translation.languageB} (${status.translation.output})**`
                   : '',

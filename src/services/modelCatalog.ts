@@ -176,6 +176,15 @@ export const MODEL_CATALOG: ModelCatalogItem[] = [
     verifiedApiId: true
   },
   {
+    id: 'veo-3.1-fast-generate-preview',
+    label: 'Veo 3.1 Fast',
+    kind: 'video',
+    strength: 'standard',
+    plans: ['plus', 'pro'],
+    relativeCost: 220,
+    verifiedApiId: true
+  },
+  {
     id: 'veo-3.1-generate-preview',
     label: 'Veo 3.1',
     kind: 'video',
@@ -207,11 +216,31 @@ export const MODEL_CATALOG: ModelCatalogItem[] = [
     verifiedApiId: true
   },
   {
+    id: 'gemini-2.5-flash-native-audio-preview-12-2025',
+    label: 'Gemini 2.5 Flash Live',
+    kind: 'live',
+    strength: 'standard',
+    plans: ['free', 'plus', 'pro'],
+    relativeCost: 0,
+    internalOnly: true,
+    verifiedApiId: true
+  },
+  {
     id: 'gemini-3.5-live-translate-preview',
     label: 'Gemini 3.5 Live Translate',
     kind: 'live',
     strength: 'premium',
     plans: ['plus', 'pro'],
+    relativeCost: 0,
+    internalOnly: true,
+    verifiedApiId: true
+  },
+  {
+    id: 'gemini-2.5-flash-preview-tts',
+    label: 'Gemini 2.5 Flash TTS',
+    kind: 'tts',
+    strength: 'standard',
+    plans: ['free', 'plus', 'pro'],
     relativeCost: 0,
     internalOnly: true,
     verifiedApiId: true
@@ -309,12 +338,12 @@ export const VIDEO_MODEL_BY_PLAN: Record<
   },
   plus: {
     lite: 'veo-3.1-lite-generate-preview',
-    fast: 'veo-3.1-lite-generate-preview',
+    fast: 'veo-3.1-fast-generate-preview',
     cinematic: undefined
   },
   pro: {
     lite: 'veo-3.1-lite-generate-preview',
-    fast: 'veo-3.1-generate-preview',
+    fast: 'veo-3.1-fast-generate-preview',
     cinematic: 'veo-3.1-generate-preview'
   }
 };
@@ -380,6 +409,50 @@ export function videoModelForPlan(
   return VIDEO_MODEL_BY_PLAN[
     planId
   ][quality];
+}
+
+export function imageModelsForPlan(
+  planId: PlanId,
+  quality: ImageQuality
+): string[] {
+  const chains: Record<PlanId, Record<ImageQuality, string[]>> = {
+    free: {
+      draft: ['gemini-3.1-flash-lite-image'],
+      standard: ['gemini-3.1-flash-lite-image'],
+      premium: []
+    },
+    plus: {
+      draft: ['gemini-3.1-flash-lite-image', 'gemini-2.5-flash-image'],
+      standard: ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.1-flash-lite-image'],
+      premium: ['gemini-3.1-flash-image', 'gemini-2.5-flash-image']
+    },
+    pro: {
+      draft: ['gemini-3.1-flash-image', 'gemini-3.1-flash-lite-image'],
+      standard: ['gemini-3.1-flash-image', 'gemini-2.5-flash-image', 'gemini-3.1-flash-lite-image'],
+      premium: ['gemini-3-pro-image', 'gemini-3.1-flash-image', 'gemini-2.5-flash-image']
+    }
+  };
+  return [...chains[planId][quality]];
+}
+
+export function videoModelsForPlan(
+  planId: PlanId,
+  quality: VideoQuality
+): string[] {
+  const chains: Record<PlanId, Record<VideoQuality, string[]>> = {
+    free: { lite: [], fast: [], cinematic: [] },
+    plus: {
+      lite: ['veo-3.1-lite-generate-preview', 'veo-3.1-fast-generate-preview'],
+      fast: ['veo-3.1-fast-generate-preview', 'veo-3.1-lite-generate-preview'],
+      cinematic: []
+    },
+    pro: {
+      lite: ['veo-3.1-lite-generate-preview', 'veo-3.1-fast-generate-preview'],
+      fast: ['veo-3.1-fast-generate-preview', 'veo-3.1-lite-generate-preview', 'veo-3.1-generate-preview'],
+      cinematic: ['veo-3.1-generate-preview', 'veo-3.1-fast-generate-preview', 'veo-3.1-lite-generate-preview']
+    }
+  };
+  return [...chains[planId][quality]];
 }
 
 export function publicModelCatalog(): Array<

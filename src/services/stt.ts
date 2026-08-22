@@ -1,6 +1,6 @@
 import { env } from '../config.js';
 import type { DiscordAttachment } from '../types.js';
-import { getGeminiTaskRoute } from './runtimeConfig.js';
+import { getGeminiTaskRoute, parseModelChain } from './runtimeConfig.js';
 import { currentUsageUserId } from './usageContext.js';
 import { recordUsage } from './billingStore.js';
 
@@ -79,82 +79,101 @@ async function callGeminiStt(
   const route = await getGeminiTaskRoute('stt');
   const data = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : Uint8Array.from(bytes);
   const base64 = Buffer.from(data).toString('base64');
+  const models = parseModelChain(route.model);
+  const errors: string[] = [];
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(route.model)}:generateContent`,
-    {
-      method: 'POST',
-      headers: {
-        'x-goog-api-key': route.apiKey,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({
-        contents: [{
-          role: 'user',
-          parts: [
-            {
-              text: 'Transcribe the spoken audio accurately. This audio may be extremely short and may contain only a wake phrase such as "TD", "TD AI", "تي دي", "تيدي", or "يا تي دي". Do not summarize, translate, explain, or answer it. Preserve the speaker language and wording. If human speech is audible, return the closest faithful transcription instead of an empty string. Return JSON only with keys "text" and "language". The language value should be a short code such as en, fa, ar-eg, ar-msa, fr, de, es, etc.'
-            },
-            {
-              inlineData: {
-                mimeType: contentType || 'audio/wav',
-                data: base64
+  for (const model of models) {
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+        {
+          method: 'POST',
+          headers: {
+            'x-goog-api-key': route.apiKey,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            contents: [{
+              role: 'user',
+              parts: [
+                {
+                  text: 'Transcribe the spoken audio accurately. Do not summarize, translate, explain, or answer it. Preserve the speaker language and wording. If human speech is audible, return the closest faithful transcription instead of an empty string. Return JSON only with keys "text" and "language". The language value should be a short code such as en, fa, ar-eg, ar-msa, fr, de, es, etc.'
+                },
+                {
+                  inlineData: {
+                    mimeType: contentType || 'audio/wav',
+                    data: base64
+                  }
+                }
+              ]
+            }],
+            generationConfig: {
+              responseMimeType: 'application/json',
+              responseSchema: {
+                type: 'OBJECT',
+                properties: {
+                  text: { type: 'STRING' },
+                  language: { type: 'STRING' }
+                },
+                required: ['text', 'language']
               }
             }
-          ]
-        }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: 'OBJECT',
-            properties: {
-              text: { type: 'STRING' },
-              language: { type: 'STRING' }
-            },
-            required: ['text', 'language']
-          }
+          }),
+          signal: AbortSignal.timeout(45_000)
         }
-      }),
-      signal: AbortSignal.timeout(120_000)
-    }
-  );
+      );
 
-  const raw = await response.text();
-  if (!response.ok) {
-    throw new Error(`Gemini STT ${response.status}: ${raw.slice(0, 300)}`);
-  }
+      const raw = await response.text();
+      if (!response.ok) {
+        throw Object.assign(
+          new Error(`Gemini STT ${response.status}: ${raw.slice(0, 300)}`),
+          { status: response.status }
+        );
+      }
 
-  const parsed = JSON.parse(raw) as {
-    candidates?: Array<{
-      content?: {
-        parts?: Array<{ text?: string }>;
+      const parsed = JSON.parse(raw) as {
+        candidates?: Array<{
+          content?: {
+            parts?: Array<{ text?: string }>;
+          };
+        }>;
       };
-    }>;
-  };
 
-  const output = parsed.candidates?.[0]?.content?.parts
-    ?.map((part) => part.text ?? '')
-    .join('')
-    .trim();
+      const output = parsed.candidates?.[0]?.content?.parts
+        ?.map((part) => part.text ?? '')
+        .join('')
+        .trim();
 
-  if (!output) throw new Error('Gemini STT returned an empty transcript.');
+      if (!output) throw new Error(`${model} returned an empty transcript.`);
 
-  const result = JSON.parse(cleanJsonCandidate(output)) as {
-    text?: string;
-    language?: string;
-  };
+      const result = JSON.parse(cleanJsonCandidate(output)) as {
+        text?: string;
+        language?: string;
+      };
 
-  if (!result.text?.trim()) {
-    throw new Error(
-      'Gemini STT detected no speech; Live audio fallback should be used.'
-    );
+      if (!result.text?.trim()) throw new Error(`${model} detected no speech.`);
+      await meterStt(bytes);
+
+      return {
+        text: result.text.trim(),
+        language: result.language?.trim() || undefined
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`${model}: ${message}`);
+      console.warn(`STT model failed (${model}); trying fallback.`, error);
+      const status = error && typeof error === 'object' && 'status' in error
+        ? Number((error as { status?: unknown }).status)
+        : undefined;
+      if (status === 401) break;
+    }
   }
-  await meterStt(bytes);
 
-  return {
-    text: result.text.trim(),
-    language: result.language?.trim() || undefined
-  };
+  if (errors.some((entry) => /429|RESOURCE_EXHAUSTED|quota/i.test(entry))) {
+    throw new Error('Gemini STT quota is temporarily exhausted on all configured fallback models.');
+  }
+
+  throw new Error(`Gemini STT failed on all configured models. ${errors.slice(-2).join(' | ')}`);
 }
 
 async function callStt(

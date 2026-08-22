@@ -23,6 +23,7 @@ import { sttConfigured, transcribeAudioBytes } from './stt.js';
 import {
   getGeminiTaskRoute,
   getVoiceRuntimeSettings,
+  parseModelChain,
   type ThinkingLevelName,
   type VoiceSpeakerAccess
 } from './runtimeConfig.js';
@@ -59,7 +60,7 @@ type LiveSessionLike = {
   close(): void;
 };
 
-type VoiceEngine = 'live' | 'cascade';
+type VoiceEngine = 'live' | 'translate-live' | 'cascade';
 type SessionPurpose = 'conversation' | 'translation';
 
 export type VoiceTranslationOptions = {
@@ -67,6 +68,13 @@ export type VoiceTranslationOptions = {
   languageB: string;
   quality: TranslationQuality;
   output: TranslationOutput;
+};
+
+type TranslationLiveConnection = {
+  live: LiveSessionLike;
+  targetLanguageCode: string;
+  primary: boolean;
+  model: string;
 };
 
 interface VoiceAiSession {
@@ -80,6 +88,9 @@ interface VoiceAiSession {
   connection: VoiceConnection;
   player: AudioPlayer;
   live?: LiveSessionLike;
+  translationLives?: TranslationLiveConnection[];
+  translationCaptionBuffers?: Map<string, string>;
+  translationCaptionTimers?: Map<string, ReturnType<typeof setTimeout>>;
   outputStream?: PassThrough;
   inputTranscript: string;
   outputTranscript: string;
@@ -100,6 +111,10 @@ interface VoiceAiSession {
   voiceName: string;
   responseDelayMs: number;
   followupSpeaker: 'same' | 'anyone';
+  liveModelChain?: string[];
+  liveModelIndex?: number;
+  liveModel?: string;
+  liveReconnecting?: boolean;
 }
 
 const sessions = new Map<string, VoiceAiSession>();
@@ -1400,17 +1415,396 @@ function handleLiveMessage(session: VoiceAiSession, message: LiveServerMessage):
   }
 }
 
-async function connectGeminiLive(session: VoiceAiSession): Promise<void> {
-  const route = await getGeminiTaskRoute('voice_live');
-  const voice = await getVoiceRuntimeSettings();
-  const control = await getVoiceControlSettings();
-  const ai = new GoogleGenAI({ apiKey: route.apiKey });
 
+function liveTranslationLanguageCode(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return 'en';
+  if (normalized.startsWith('ar')) return 'ar';
+  if (normalized.startsWith('fa') || normalized.startsWith('per')) return 'fa';
+  if (normalized.startsWith('zh')) {
+    return normalized.includes('hant') || normalized.includes('tw') || normalized.includes('hk')
+      ? 'zh-Hant'
+      : 'zh-Hans';
+  }
+  return normalized.split('-')[0] || normalized;
+}
+
+function flushTranslationCaption(
+  session: VoiceAiSession,
+  targetLanguageCode: string
+): void {
+  const text = session.translationCaptionBuffers?.get(targetLanguageCode)?.trim();
+  if (!text) return;
+
+  session.translationCaptionBuffers?.delete(targetLanguageCode);
+  const speakerId = session.lastSpeakerId ?? session.userId;
+  void postToVoiceTextChannel(
+    session,
+    [
+      `🌐 <@${speakerId}> → **${targetLanguageCode}**`,
+      text.slice(0, 1700)
+    ].join('\n')
+  ).catch((error) => console.error('Live translation caption failed:', error));
+}
+
+function scheduleTranslationCaption(
+  session: VoiceAiSession,
+  targetLanguageCode: string,
+  text: string
+): void {
+  if (!text.trim()) return;
+  session.translationCaptionBuffers ??= new Map();
+  session.translationCaptionTimers ??= new Map();
+
+  const current = session.translationCaptionBuffers.get(targetLanguageCode) ?? '';
+  session.translationCaptionBuffers.set(
+    targetLanguageCode,
+    mergeTranscript(current, text)
+  );
+
+  const existing = session.translationCaptionTimers.get(targetLanguageCode);
+  if (existing) clearTimeout(existing);
+
+  const timer = setTimeout(() => {
+    session.translationCaptionTimers?.delete(targetLanguageCode);
+    flushTranslationCaption(session, targetLanguageCode);
+  }, 550);
+
+  session.translationCaptionTimers.set(targetLanguageCode, timer);
+}
+
+function handleLiveTranslationMessage(
+  session: VoiceAiSession,
+  message: LiveServerMessage,
+  targetLanguageCode: string,
+  primary: boolean
+): void {
+  const content = message.serverContent;
+  if (!content) return;
+
+  if (primary && content.inputTranscription?.text) {
+    session.inputTranscript = mergeTranscript(
+      session.inputTranscript,
+      content.inputTranscription.text
+    );
+  }
+
+  if (content.outputTranscription?.text) {
+    session.outputTranscript = mergeTranscript(
+      session.outputTranscript,
+      content.outputTranscription.text
+    );
+
+    if (
+      session.translation?.output === 'captions' ||
+      session.translation?.output === 'both'
+    ) {
+      scheduleTranslationCaption(
+        session,
+        targetLanguageCode,
+        content.outputTranscription.text
+      );
+    }
+  }
+
+  if (
+    session.translation?.output === 'voice' ||
+    session.translation?.output === 'both'
+  ) {
+    for (const part of content.modelTurn?.parts ?? []) {
+      const data = part.inlineData?.data;
+      if (!data) continue;
+      const pcm24 = Buffer.from(data, 'base64');
+      if (pcm24.byteLength) {
+        ensureLivePlayback(session).write(
+          geminiPcm24MonoToDiscord48Stereo(pcm24)
+        );
+      }
+    }
+  }
+}
+
+async function switchTranslationToCascade(
+  session: VoiceAiSession,
+  reason: string
+): Promise<void> {
+  if (session.engine !== 'translate-live') return;
+
+  console.warn(`Switching Live Translation to cascade fallback: ${reason}`);
+  session.engine = 'cascade';
+  stopPlayback(session);
+  for (const item of session.translationLives ?? []) {
+    try { item.live.close(); } catch { /* no-op */ }
+  }
+  session.translationLives = [];
+
+  if (!sttConfigured()) {
+    await notifyUser(
+      session.userId,
+      '❌ **TD AI Live Translation:** Native Live Translate became unavailable and STT fallback is not configured.'
+    );
+    return;
+  }
+
+  if (
+    session.translation &&
+    (session.translation.output === 'voice' || session.translation.output === 'both') &&
+    !geminiTtsConfigured()
+  ) {
+    await notifyUser(
+      session.userId,
+      '❌ **TD AI Live Translation:** Native Live Translate became unavailable and TTS fallback is not configured.'
+    );
+    return;
+  }
+
+  attachCascadeReceiver(session);
+  await notifyUser(
+    session.userId,
+    '⚠️ **TD AI Live Translation:** Native audio translation is temporarily unavailable, so TD switched to the STT → translation → TTS fallback.'
+  );
+}
+
+async function connectOneLiveTranslation(
+  session: VoiceAiSession,
+  apiKey: string,
+  model: string,
+  targetLanguageCode: string,
+  primary: boolean
+): Promise<TranslationLiveConnection> {
+  const ai = new GoogleGenAI({ apiKey });
   const live = await ai.live.connect({
-    model: route.model,
+    model,
     callbacks: {
       onopen: () => {
-        console.log(`Gemini Live connected for guild ${session.guildId} via ${route.providerName}/${route.model}.`);
+        console.log(
+          `Gemini Live Translate connected for guild ${session.guildId}: ${model} -> ${targetLanguageCode}.`
+        );
+      },
+      onmessage: (message) => {
+        try {
+          handleLiveTranslationMessage(
+            session,
+            message,
+            targetLanguageCode,
+            primary
+          );
+        } catch (error) {
+          console.error('Live Translation message handling error:', error);
+        }
+      },
+      onerror: (event) => {
+        console.error(
+          `Gemini Live Translate socket error (${targetLanguageCode}):`,
+          event.message
+        );
+        void switchTranslationToCascade(
+          session,
+          event.message || 'Live Translation socket error.'
+        ).catch((error) => console.error('Translation fallback switch failed:', error));
+      },
+      onclose: (event) => {
+        console.log(
+          `Gemini Live Translate closed (${targetLanguageCode}) (${event.code}): ${event.reason}`
+        );
+      }
+    },
+    config: {
+      responseModalities: [Modality.AUDIO],
+      inputAudioTranscription: {},
+      outputAudioTranscription: {},
+      translationConfig: {
+        targetLanguageCode,
+        echoTargetLanguage: false
+      }
+    }
+  });
+
+  return {
+    live,
+    targetLanguageCode,
+    primary,
+    model
+  };
+}
+
+async function connectGeminiLiveTranslation(session: VoiceAiSession): Promise<void> {
+  const options = session.translation;
+  if (!options) throw new Error('Live Translation is not configured for this session.');
+
+  const route = await getGeminiTaskRoute('voice_translate');
+  const models = parseModelChain(route.model);
+  const languageA = liveTranslationLanguageCode(options.languageA);
+  const languageB = liveTranslationLanguageCode(options.languageB);
+
+  if (languageA === languageB) {
+    throw new Error('Choose two different languages for Live Translation.');
+  }
+
+  const errors: string[] = [];
+  for (const model of models) {
+    const opened: TranslationLiveConnection[] = [];
+    try {
+      opened.push(
+        await connectOneLiveTranslation(
+          session,
+          route.apiKey,
+          model,
+          languageA,
+          true
+        )
+      );
+      opened.push(
+        await connectOneLiveTranslation(
+          session,
+          route.apiKey,
+          model,
+          languageB,
+          false
+        )
+      );
+
+      session.translationLives = opened;
+      console.log(
+        `Live Translation ready: ${languageA} <-> ${languageB} via ${route.providerName}/${model}.`
+      );
+      return;
+    } catch (error) {
+      for (const item of opened) {
+        try { item.live.close(); } catch { /* no-op */ }
+      }
+      errors.push(`${model}: ${errorMessage(error)}`);
+      console.warn(`Live Translation model failed (${model}); trying fallback.`, error);
+    }
+  }
+
+  throw new Error(
+    `Gemini Live Translation is unavailable. ${errors.slice(-2).join(' | ')}`
+  );
+}
+
+function attachLiveTranslationReceiver(session: VoiceAiSession): void {
+  const receiver = session.connection.receiver;
+
+  receiver.speaking.on('start', (speakerId) => {
+    const current = sessions.get(session.guildId);
+    if (
+      !current ||
+      current !== session ||
+      !session.translationLives?.length ||
+      !canListenToSpeaker(session, speakerId)
+    ) {
+      return;
+    }
+
+    if (session.capturing) return;
+
+    session.capturing = true;
+    session.activeSpeakerId = speakerId;
+    session.lastSpeakerId = speakerId;
+    session.participantIds.add(speakerId);
+    session.inputTranscript = '';
+    session.outputTranscript = '';
+
+    const opusStream = receiver.subscribe(speakerId, {
+      end: {
+        behavior: EndBehaviorType.AfterSilence,
+        duration: Math.max(280, Math.min(session.silenceMs, 500))
+      }
+    });
+
+    const decoder = new OpusScript(48_000, 2, OpusScript.Application.AUDIO);
+    let pending = Buffer.alloc(0);
+    let inputBytes = 0;
+    let finalized = false;
+    const chunkBytes = 16_000 * 2 / 10; // 100 ms of 16kHz mono PCM16.
+    const timer = setTimeout(
+      () => opusStream.destroy(),
+      env.VOICE_AI_MAX_UTTERANCE_SECONDS * 1000
+    );
+
+    const sendChunk = (pcm: Buffer) => {
+      if (!pcm.byteLength) return;
+      inputBytes += pcm.byteLength;
+      for (const target of session.translationLives ?? []) {
+        target.live.sendRealtimeInput({
+          audio: {
+            data: pcm.toString('base64'),
+            mimeType: 'audio/pcm;rate=16000'
+          }
+        });
+      }
+    };
+
+    const finalize = () => {
+      if (finalized) return;
+      finalized = true;
+      clearTimeout(timer);
+      session.capturing = false;
+      session.activeSpeakerId = undefined;
+      if (pending.byteLength) sendChunk(pending);
+      pending = Buffer.alloc(0);
+      try { decoder.delete(); } catch { /* no-op */ }
+
+      const seconds = inputBytes / (16_000 * 2);
+      if (seconds > 0) {
+        void recordUsage(
+          speakerId,
+          'live_translation',
+          Math.max(1, Math.ceil(seconds * 12))
+        ).catch(() => undefined);
+      }
+      session.turns += 1;
+    };
+
+    opusStream.on('data', (packet: Buffer) => {
+      try {
+        const pcm = discordPcm48StereoToGemini16Mono(
+          Buffer.from(decoder.decode(packet))
+        );
+        if (!pcm.byteLength) return;
+        pending = pending.byteLength ? Buffer.concat([pending, pcm]) : pcm;
+
+        while (pending.byteLength >= chunkBytes) {
+          const chunk = pending.subarray(0, chunkBytes);
+          pending = pending.subarray(chunkBytes);
+          sendChunk(chunk);
+        }
+      } catch (error) {
+        console.error('Live Translation decode/send error:', error);
+      }
+    });
+
+    opusStream.once('end', finalize);
+    opusStream.once('close', finalize);
+    opusStream.once('error', (error) => {
+      console.error('Live Translation receive stream error:', error.message);
+      finalize();
+    });
+  });
+}
+
+type LiveVoiceRoute = {
+  apiKey: string;
+  providerName: string;
+};
+
+async function openGeminiLiveModel(
+  session: VoiceAiSession,
+  route: LiveVoiceRoute,
+  voice: Awaited<ReturnType<typeof getVoiceRuntimeSettings>>,
+  model: string
+): Promise<LiveSessionLike> {
+  const ai = new GoogleGenAI({ apiKey: route.apiKey });
+  let opened: LiveSessionLike | undefined;
+
+  const live = await ai.live.connect({
+    model,
+    callbacks: {
+      onopen: () => {
+        console.log(
+          `Gemini Live connected for guild ${session.guildId} via ${route.providerName}/${model}.`
+        );
       },
       onmessage: (message) => {
         try {
@@ -1420,14 +1814,28 @@ async function connectGeminiLive(session: VoiceAiSession): Promise<void> {
         }
       },
       onerror: (event) => {
-        console.error('Gemini Live socket error:', event.message);
-        void notifyUser(
-          session.userId,
-          `❌ **TD AI Live Voice:** ${event.message || 'Live API socket error.'}`
-        );
+        console.error(`Gemini Live socket error (${model}):`, event.message);
+        if (opened && session.live === opened) {
+          void failoverGeminiLive(
+            session,
+            model,
+            event.message || 'Live API socket error.'
+          ).catch((error) => console.error('Gemini Live runtime failover failed:', error));
+        }
       },
       onclose: (event) => {
-        console.log(`Gemini Live closed (${event.code}): ${event.reason}`);
+        console.log(`Gemini Live closed (${model}) (${event.code}): ${event.reason}`);
+        if (
+          opened &&
+          session.live === opened &&
+          event.code !== 1000
+        ) {
+          void failoverGeminiLive(
+            session,
+            model,
+            event.reason || `Live API closed with code ${event.code}.`
+          ).catch((error) => console.error('Gemini Live close failover failed:', error));
+        }
       }
     },
     config: {
@@ -1463,7 +1871,100 @@ async function connectGeminiLive(session: VoiceAiSession): Promise<void> {
     }
   });
 
-  session.live = live;
+  opened = live;
+  return live;
+}
+
+async function failoverGeminiLive(
+  session: VoiceAiSession,
+  failedModel: string,
+  reason: string
+): Promise<void> {
+  if (
+    session.liveReconnecting ||
+    sessions.get(session.guildId) !== session ||
+    session.engine !== 'live' ||
+    session.liveModel !== failedModel
+  ) {
+    return;
+  }
+
+  const models = session.liveModelChain ?? [];
+  const currentIndex = Math.max(
+    0,
+    session.liveModelIndex ?? models.indexOf(failedModel)
+  );
+
+  if (currentIndex + 1 >= models.length) {
+    await notifyUser(
+      session.userId,
+      `❌ **TD AI Live Voice:** ${reason} No Live Voice fallback model is left for this session.`
+    );
+    return;
+  }
+
+  session.liveReconnecting = true;
+  session.busy = false;
+  stopPlayback(session);
+
+  try {
+    try { session.live?.close(); } catch { /* no-op */ }
+    session.live = undefined;
+
+    const route = await getGeminiTaskRoute('voice_live');
+    const voice = await getVoiceRuntimeSettings();
+    const errors: string[] = [];
+
+    for (let index = currentIndex + 1; index < models.length; index += 1) {
+      const model = models[index]!;
+      try {
+        const live = await openGeminiLiveModel(session, route, voice, model);
+        session.live = live;
+        session.liveModel = model;
+        session.liveModelIndex = index;
+        await notifyUser(
+          session.userId,
+          `⚡ **TD AI Live Voice:** switched automatically to fallback model \`${model}\`.`
+        );
+        return;
+      } catch (error) {
+        errors.push(`${model}: ${errorMessage(error)}`);
+        console.warn(`Gemini Live runtime fallback failed (${model}).`, error);
+      }
+    }
+
+    await notifyUser(
+      session.userId,
+      `❌ **TD AI Live Voice:** all fallback models are unavailable. ${errors.slice(-2).join(' | ')}`
+    );
+  } finally {
+    session.liveReconnecting = false;
+  }
+}
+
+async function connectGeminiLive(session: VoiceAiSession): Promise<void> {
+  const route = await getGeminiTaskRoute('voice_live');
+  const voice = await getVoiceRuntimeSettings();
+  const models = parseModelChain(route.model);
+  const errors: string[] = [];
+
+  session.liveModelChain = models;
+
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index]!;
+    try {
+      const live = await openGeminiLiveModel(session, route, voice, model);
+      session.live = live;
+      session.liveModel = model;
+      session.liveModelIndex = index;
+      return;
+    } catch (error) {
+      errors.push(`${model}: ${errorMessage(error)}`);
+      console.warn(`Gemini Live model failed (${model}); trying fallback.`, error);
+    }
+  }
+
+  throw new Error(`All Live Voice models are unavailable. ${errors.slice(-2).join(' | ')}`);
 }
 
 function attachLiveReceiver(session: VoiceAiSession): void {
@@ -1572,6 +2073,7 @@ async function createSession(
   if (existing) {
     stopPlayback(existing);
     existing.live?.close();
+    for (const item of existing.translationLives ?? []) item.live.close();
     existing.connection.destroy();
     sessions.delete(guildId);
   }
@@ -1603,11 +2105,12 @@ async function createSession(
   // Wake-word mode now gates INPUT locally with STT, but Gemini Live still
   // produces the actual spoken response. This avoids the fragile
   // STT -> text model -> separate TTS chain for normal conversation.
-  const engine: VoiceEngine =
-    purpose === 'conversation' &&
-    env.VOICE_AI_MODE === 'live'
-      ? 'live'
-      : 'cascade';
+  let engine: VoiceEngine =
+    purpose === 'translation'
+      ? 'translate-live'
+      : purpose === 'conversation' && env.VOICE_AI_MODE === 'live'
+        ? 'live'
+        : 'cascade';
 
   if (
     purpose === 'conversation' &&
@@ -1624,17 +2127,6 @@ async function createSession(
     );
   }
 
-  if (
-    purpose === 'translation' &&
-    translation &&
-    (translation.output === 'voice' || translation.output === 'both') &&
-    !geminiTtsConfigured()
-  ) {
-    connection.destroy();
-    throw new Error(
-      'Voice output for Live Translation requires Gemini TTS. Use Captions only or configure TTS.'
-    );
-  }
 
   const personal =
     await getUserPersonalization(userId);
@@ -1676,10 +2168,31 @@ async function createSession(
   try {
     if (engine === 'live') {
       await connectGeminiLive(session);
-      // v3.14.5: conversation is always-listening.
-      // Every allowed human speaker in the channel is forwarded directly
-      // to Gemini Live; no wake word / TD name is required.
+      // Conversation is always-listening; no wake phrase is required.
       attachLiveReceiver(session);
+    } else if (engine === 'translate-live') {
+      try {
+        await connectGeminiLiveTranslation(session);
+        attachLiveTranslationReceiver(session);
+      } catch (liveTranslateError) {
+        console.warn(
+          'Native Live Translation unavailable; falling back to STT -> text translation -> TTS:',
+          liveTranslateError
+        );
+
+        if (!sttConfigured()) throw liveTranslateError;
+        if (
+          translation &&
+          (translation.output === 'voice' || translation.output === 'both') &&
+          !geminiTtsConfigured()
+        ) {
+          throw liveTranslateError;
+        }
+
+        engine = 'cascade';
+        session.engine = 'cascade';
+        attachCascadeReceiver(session);
+      }
     } else {
       attachCascadeReceiver(session);
     }
@@ -1687,6 +2200,7 @@ async function createSession(
     sessions.delete(guildId);
     stopPlayback(session);
     session.live?.close();
+    for (const item of session.translationLives ?? []) item.live.close();
     session.connection.destroy();
     throw error;
   }
@@ -1697,6 +2211,7 @@ async function createSession(
     if (current === session) {
       sessions.delete(guildId);
       session.live?.close();
+      for (const item of session.translationLives ?? []) item.live.close();
       stopPlayback(session);
     }
   });
@@ -1805,6 +2320,7 @@ export function leaveVoiceAi(guildId: string, requesterId?: string): boolean {
   sessions.delete(guildId);
   stopPlayback(session);
   session.live?.close();
+  for (const item of session.translationLives ?? []) item.live.close();
   session.history = [];
   session.connection.destroy();
   return true;
