@@ -966,7 +966,7 @@ export function registerAdminDashboard(app: Express): void {
     try {
       const updated =
         await adminUpdateUser(
-          req.params.id,
+          String(req.params.id ?? ''),
           {
             role:
               req.body.role as AccountRole | undefined,
@@ -1004,7 +1004,7 @@ export function registerAdminDashboard(app: Express): void {
 
   router.post('/api/users/:id/reset', requireAdmin, async (req, res) => {
     try {
-      await resetUserUsage(req.params.id);
+      await resetUserUsage(String(req.params.id ?? ''));
       res.json({ ok: true });
     } catch (error) {
       res.status(400).json({
@@ -1099,7 +1099,7 @@ export function registerAdminDashboard(app: Express): void {
   router.delete('/api/providers/:id', requireAdmin, async (req, res) => {
     try {
       await deleteRuntimeProvider(
-        req.params.id
+        String(req.params.id ?? '')
       );
 
       res.json({
