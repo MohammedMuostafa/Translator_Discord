@@ -338,6 +338,14 @@ function defaultModels(): ModelRegistration[] {
       priority: 80
     },
     {
+      id: 'gemini-2.5-flash-image',
+      providerId: 'env-gemini',
+      label: 'Nano Banana (Gemini 2.5 Image)',
+      capabilities: ['image_generate', 'image_edit'],
+      enabled: true,
+      priority: 70
+    },
+    {
       id: 'veo-3.1-lite-generate-preview',
       providerId: 'env-gemini',
       label: 'Veo 3.1 Lite',
@@ -362,12 +370,28 @@ function defaultModels(): ModelRegistration[] {
       priority: 80
     },
     {
+      id: 'gemini-omni-flash',
+      providerId: 'env-gemini',
+      label: 'Gemini Omni Flash (Video)',
+      capabilities: ['video_generate'],
+      enabled: true,
+      priority: 85
+    },
+    {
       id: 'gemini-3.1-flash-live-preview',
       providerId: 'env-gemini',
       label: 'Gemini 3.1 Flash Live',
       capabilities: ['voice_live'],
       enabled: true,
       priority: 100
+    },
+    {
+      id: 'gemini-2.5-flash-native-audio-preview-12-2025',
+      providerId: 'env-gemini',
+      label: 'Gemini 2.5 Flash Live',
+      capabilities: ['voice_live'],
+      enabled: true,
+      priority: 90
     },
     {
       id: 'gemini-3.5-live-translate-preview',
@@ -384,6 +408,14 @@ function defaultModels(): ModelRegistration[] {
       capabilities: ['tts'],
       enabled: true,
       priority: 100
+    },
+    {
+      id: 'gemini-2.5-flash-preview-tts',
+      providerId: 'env-gemini',
+      label: 'Gemini 2.5 Flash TTS',
+      capabilities: ['tts'],
+      enabled: true,
+      priority: 90
     }
   ];
 }
@@ -706,6 +738,17 @@ export async function deleteRuntimeProvider(id: string): Promise<void> {
   });
 }
 
+export async function toggleRuntimeProvider(id: string, enabled?: boolean): Promise<boolean> {
+  const config = await load();
+  const provider = config.providers.find((p) => p.id === id);
+  if (!provider) throw new Error(`Provider '${id}' not found.`);
+  const nextEnabled = enabled !== undefined ? enabled : !provider.enabled;
+  provider.enabled = nextEnabled;
+  provider.updatedAt = new Date().toISOString();
+  await persist({ ...config, updatedAt: new Date().toISOString() });
+  return nextEnabled;
+}
+
 // ---------------------------------------------------------------------------
 // Model Registry Management
 // ---------------------------------------------------------------------------
@@ -778,6 +821,23 @@ export async function deleteRuntimeModel(providerId: string, modelId: string): P
   );
 
   await persist({ ...config, models, updatedAt: new Date().toISOString() });
+}
+
+export async function toggleRuntimeModel(
+  providerId: string,
+  modelId: string,
+  enabled?: boolean
+): Promise<boolean> {
+  const config = await load();
+  const model = config.models.find(
+    (m) => m.providerId === providerId && m.id === modelId
+  );
+  if (!model) throw new Error(`Model '${modelId}' not found under provider '${providerId}'.`);
+  const nextEnabled = enabled !== undefined ? enabled : !model.enabled;
+  model.enabled = nextEnabled;
+  model.updatedAt = new Date().toISOString();
+  await persist({ ...config, updatedAt: new Date().toISOString() });
+  return nextEnabled;
 }
 
 // ---------------------------------------------------------------------------
@@ -1040,4 +1100,136 @@ export async function getDisplayRuntimeSettings(): Promise<DisplayRuntimeSetting
     originalPreviewChars: config.display.originalPreviewChars ?? 420,
     smartAnswerArabicFirst: config.display.smartAnswerArabicFirst ?? true
   };
+}
+
+export async function testRuntimeProvider(
+  providerId: string
+): Promise<{ ok: boolean; latencyMs: number; message: string }> {
+  const config = await load();
+  const start = Date.now();
+
+  let kind: ProviderKind;
+  let apiUrl: string | undefined;
+  let apiKey: string;
+  let name: string;
+
+  if (providerId === 'env-gemini') {
+    kind = 'gemini-native';
+    apiKey = env.AI_API_KEY ?? env.GEMINI_LIVE_API_KEY ?? '';
+    name = 'Environment Gemini';
+  } else if (providerId === 'env-text') {
+    const googleNative = isGoogleGeminiUrl(env.AI_API_URL);
+    kind = googleNative ? 'gemini-native' : 'openai-compatible';
+    apiUrl = googleNative ? undefined : env.AI_API_URL;
+    apiKey = env.AI_API_KEY ?? '';
+    name = 'Environment Text AI';
+  } else {
+    const provider = config.providers.find((p) => p.id === providerId);
+    if (!provider) throw new Error(`Provider '${providerId}' not found.`);
+    kind = provider.kind;
+    apiUrl = provider.apiUrl;
+    apiKey = decryptSecret(provider.encryptedApiKey);
+    name = provider.name;
+  }
+
+  if (!apiKey) throw new Error(`No API key configured for provider '${name}'.`);
+
+  try {
+    if (kind === 'gemini-native') {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(apiKey)}`,
+        { signal: AbortSignal.timeout(10_000) }
+      );
+      const latencyMs = Date.now() - start;
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Gemini API returned status ${res.status}: ${text.slice(0, 200)}`);
+      }
+      return { ok: true, latencyMs, message: `Successfully connected to Gemini API (${latencyMs}ms)` };
+    }
+
+    if (kind === 'openai-native') {
+      const url = apiUrl ? `${apiUrl.replace(/\/+$/, '')}/models` : 'https://api.openai.com/v1/models';
+      const res = await fetch(url, {
+        headers: { authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(10_000)
+      });
+      const latencyMs = Date.now() - start;
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`OpenAI API returned status ${res.status}: ${text.slice(0, 200)}`);
+      }
+      return { ok: true, latencyMs, message: `Successfully connected to OpenAI API (${latencyMs}ms)` };
+    }
+
+    if (kind === 'anthropic-native') {
+      const url = apiUrl ? `${apiUrl.replace(/\/+$/, '')}/messages` : 'https://api.anthropic.com/v1/messages';
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'claude-3-5-haiku-20241022',
+          max_tokens: 1,
+          messages: [{ role: 'user', content: 'hi' }]
+        }),
+        signal: AbortSignal.timeout(10_000)
+      });
+      const latencyMs = Date.now() - start;
+      if (!res.ok && res.status !== 200 && res.status !== 400) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Anthropic API returned status ${res.status}: ${text.slice(0, 200)}`);
+      }
+      return { ok: true, latencyMs, message: `Successfully connected to Anthropic API (${latencyMs}ms)` };
+    }
+
+    if (kind === 'openrouter') {
+      const url = apiUrl ? `${apiUrl.replace(/\/+$/, '')}/models` : 'https://openrouter.ai/api/v1/models';
+      const res = await fetch(url, {
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          'http-referer': 'https://github.com/MohammedMuostafa/Translator_Discord',
+          'x-title': 'TD AI Hub'
+        },
+        signal: AbortSignal.timeout(10_000)
+      });
+      const latencyMs = Date.now() - start;
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`OpenRouter API returned status ${res.status}: ${text.slice(0, 200)}`);
+      }
+      return { ok: true, latencyMs, message: `Successfully connected to OpenRouter API (${latencyMs}ms)` };
+    }
+
+    if (kind === 'openai-compatible') {
+      if (!apiUrl) throw new Error('API Endpoint URL is required for OpenAI-Compatible providers.');
+      const base = apiUrl.replace(/\/+$/, '');
+      const url = base.endsWith('/v1') ? `${base}/models` : `${base}/v1/models`;
+      const res = await fetch(url, {
+        headers: { authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(10_000)
+      }).catch(async () => {
+        return fetch(base, {
+          headers: { authorization: `Bearer ${apiKey}` },
+          signal: AbortSignal.timeout(10_000)
+        });
+      });
+      const latencyMs = Date.now() - start;
+      if (!res.ok && res.status >= 500) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Endpoint returned status ${res.status}: ${text.slice(0, 200)}`);
+      }
+      return { ok: true, latencyMs, message: `Successfully reached custom API endpoint (${latencyMs}ms)` };
+    }
+
+    throw new Error(`Unsupported provider kind '${kind}'.`);
+  } catch (error) {
+    const latencyMs = Date.now() - start;
+    throw new Error(
+      `Connectivity test failed (${latencyMs}ms): ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 }

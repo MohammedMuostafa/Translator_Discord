@@ -144,6 +144,22 @@ export const commands = [
   },
   {
     ...common,
+    name: 'code',
+    description: 'Write, debug, review, optimize, or explain code with configured code AI',
+    type: 1,
+    options: [
+      {
+        name: 'prompt',
+        description: 'Code question, snippet to debug/review, or instructions',
+        type: 3,
+        required: true,
+        max_length: 4000
+      },
+      aiLanguageOption
+    ]
+  },
+  {
+    ...common,
     name: 'say',
     description: 'Translate your text into a copy-ready message you can send yourself',
     type: 1,
@@ -218,7 +234,32 @@ export const commands = [
       },
       {
         name: 'now',
-        description: 'Show what is playing now',
+        description: 'Show interactive music player and current track',
+        type: 1
+      },
+      {
+        name: 'volume',
+        description: 'Set playback volume (0 to 200%)',
+        type: 1,
+        options: [
+          {
+            name: 'level',
+            description: 'Volume level between 0 and 200',
+            type: 4,
+            required: true,
+            min_value: 0,
+            max_value: 200
+          }
+        ]
+      },
+      {
+        name: 'volume-up',
+        description: 'Increase playback volume by 10%',
+        type: 1
+      },
+      {
+        name: 'volume-down',
+        description: 'Decrease playback volume by 10%',
         type: 1
       }
     ]
@@ -501,6 +542,19 @@ export const commands = [
     description: 'Set your language and default translation behavior',
     type: 1,
     options: [
+      {
+        name: 'quick_translate',
+        description: 'ON: translate immediately. OFF: show language select menu when target is not given.',
+        type: 5,
+        required: false
+      },
+      {
+        name: 'translate_target',
+        description: 'Default target language for quick translation',
+        type: 3,
+        required: false,
+        choices: targetLanguageChoicesWithDefault('Keep current').filter((item) => item.value !== 'my')
+      },
       {
         name: 'my_language',
         description: 'Used by “My language” and TD AI message tools',

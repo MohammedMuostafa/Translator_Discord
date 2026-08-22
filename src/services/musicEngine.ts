@@ -4,7 +4,8 @@ import {
   AudioPlayerStatus,
   StreamType,
   createAudioResource,
-  type AudioPlayer
+  type AudioPlayer,
+  type AudioResource
 } from '@discordjs/voice';
 
 const execFileAsync = promisify(execFile);
@@ -21,6 +22,7 @@ export type MusicTrack = {
 export type MusicQueueSnapshot = {
   active: boolean;
   paused: boolean;
+  volume: number;
   current?: MusicTrack;
   queued: MusicTrack[];
 };
@@ -38,12 +40,15 @@ type GuildMusicState = {
   current?: MusicTrack;
   paused: boolean;
   resolving: boolean;
+  volume: number;
+  resource?: AudioResource;
   ytdlp?: ChildProcessWithoutNullStreams;
   ffmpeg?: ChildProcessWithoutNullStreams;
   hooks: MusicHooks;
 };
 
 const states = new Map<string, GuildMusicState>();
+const guildVolumes = new Map<string, number>();
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -155,6 +160,7 @@ function stopProcesses(state: GuildMusicState): void {
   try { state.ffmpeg?.kill('SIGKILL'); } catch { /* no-op */ }
   state.ytdlp = undefined;
   state.ffmpeg = undefined;
+  state.resource = undefined;
 }
 
 function ensureState(
@@ -163,6 +169,7 @@ function ensureState(
   hooks: MusicHooks = {}
 ): GuildMusicState {
   const existing = states.get(guildId);
+  const vol = guildVolumes.get(guildId) ?? 100;
   if (existing) {
     existing.player = player;
     existing.hooks = hooks;
@@ -174,6 +181,7 @@ function ensureState(
     queue: [],
     paused: false,
     resolving: false,
+    volume: vol,
     hooks
   };
   states.set(guildId, state);
@@ -258,6 +266,7 @@ async function startTrack(guildId: string, state: GuildMusicState, track: MusicT
 
   const resource = createAudioResource(ffmpeg.stdout, {
     inputType: StreamType.Raw,
+    inlineVolume: true,
     metadata: {
       tdMusic: true,
       guildId,
@@ -265,6 +274,13 @@ async function startTrack(guildId: string, state: GuildMusicState, track: MusicT
     }
   });
 
+  const currentVol = state.volume ?? getGuildMusicVolume(guildId);
+  if (resource.volume) {
+    resource.volume.setVolume(currentVol / 100);
+  }
+
+  state.resource = resource;
+  state.volume = currentVol;
   state.player.play(resource);
 
   state.player.once(AudioPlayerStatus.Idle, () => {
@@ -364,15 +380,39 @@ export function stopMusic(guildId: string): boolean {
   return hadMusic;
 }
 
+export function getGuildMusicVolume(guildId: string): number {
+  return guildVolumes.get(guildId) ?? 100;
+}
+
+export function setGuildMusicVolume(guildId: string, volumePercent: number): number {
+  const clamped = Math.max(0, Math.min(200, Math.round(volumePercent)));
+  guildVolumes.set(guildId, clamped);
+  const state = states.get(guildId);
+  if (state) {
+    state.volume = clamped;
+    if (state.resource?.volume) {
+      state.resource.volume.setVolume(clamped / 100);
+    }
+  }
+  return clamped;
+}
+
+export function adjustGuildMusicVolume(guildId: string, deltaPercent: number): number {
+  const current = getGuildMusicVolume(guildId);
+  return setGuildMusicVolume(guildId, current + deltaPercent);
+}
+
 export function musicQueue(guildId: string): MusicQueueSnapshot {
   const state = states.get(guildId);
+  const volume = getGuildMusicVolume(guildId);
   if (!state) {
-    return { active: false, paused: false, queued: [] };
+    return { active: false, paused: false, volume, queued: [] };
   }
 
   return {
     active: Boolean(state.current),
     paused: state.paused,
+    volume: state.volume ?? volume,
     current: state.current,
     queued: [...state.queue]
   };

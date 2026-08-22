@@ -3,7 +3,8 @@ import type { DiscordMessage } from '../types.js';
 
 export type TranslationSession = {
   userId: string;
-  message: DiscordMessage;
+  message?: DiscordMessage;
+  text?: string;
   createdAt: number;
 };
 
@@ -21,6 +22,13 @@ export function createTranslationSession(userId: string, message: DiscordMessage
   cleanup();
   const id = randomUUID().replaceAll('-', '').slice(0, 20);
   sessions.set(id, { userId, message, createdAt: Date.now() });
+  return id;
+}
+
+export function createTranslationTextSession(userId: string, text: string): string {
+  cleanup();
+  const id = randomUUID().replaceAll('-', '').slice(0, 20);
+  sessions.set(id, { userId, text, createdAt: Date.now() });
   return id;
 }
 

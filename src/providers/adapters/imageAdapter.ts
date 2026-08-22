@@ -160,6 +160,53 @@ async function generateGeminiImage(input: ImageExecutionInput): Promise<Generate
 // ---------------------------------------------------------------------------
 async function generateOpenAiImage(input: ImageExecutionInput): Promise<GeneratedImageResult> {
   const base = input.apiUrl?.trim() || 'https://api.openai.com/v1';
+
+  if (input.source) {
+    const url = `${base.replace(/\/+$/, '')}/images/edits`;
+    const form = new FormData();
+    const sourceData = input.source.data instanceof ArrayBuffer
+      ? new Uint8Array(input.source.data)
+      : Uint8Array.from(input.source.data);
+    form.append('image', new Blob([sourceData], { type: input.source.contentType || 'image/png' }), 'source.png');
+    form.append('prompt', input.prompt);
+    form.append('n', '1');
+    form.append('size', openAiSize(input.aspectRatio));
+    form.append('response_format', 'b64_json');
+    if (input.model.toLowerCase().includes('dall-e')) {
+      form.append('model', input.model);
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${input.apiKey}`
+      },
+      body: form,
+      signal: AbortSignal.timeout(90_000)
+    });
+
+    const raw = await response.text();
+    if (!response.ok) {
+      throw new Error(`OpenAI image edit error (${response.status}): ${raw.slice(0, 400)}`);
+    }
+
+    const parsed = JSON.parse(raw) as {
+      data?: Array<{ b64_json?: string; url?: string }>;
+    };
+
+    const b64 = parsed.data?.[0]?.b64_json;
+    if (b64) {
+      const bytes = Buffer.from(b64, 'base64');
+      return {
+        filename: 'td-ai-image.png',
+        contentType: 'image/png',
+        data: new Uint8Array(bytes),
+        quality: input.quality,
+        model: input.model
+      };
+    }
+  }
+
   const url = `${base.replace(/\/+$/, '')}/images/generations`;
 
   const model = input.model.toLowerCase().includes('dall-e') ? input.model : 'dall-e-3';

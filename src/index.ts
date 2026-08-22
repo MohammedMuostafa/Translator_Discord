@@ -23,6 +23,7 @@ import {
   handleAiMessagePicker,
   handleAiSlash,
   handleAiTranslateTarget,
+  handleCodeSlash,
   handleHelp,
   handleSmartReplyButton,
   handleSmartReplyEditModal,
@@ -30,7 +31,7 @@ import {
 } from './aiActionHandlers.js';
 import { handleVoiceChatCommand } from './voiceHandlers.js';
 import { handleImageCommand, handleVideoCommand } from './mediaHandlers.js';
-import { handleMusicCommand } from './musicHandlers.js';
+import { handleMusicButton, handleMusicCommand } from './musicHandlers.js';
 import type { DiscordInteraction } from './types.js';
 import { registerGlobalCommands } from './registerCommands.js';
 import { aiConfigured } from './providers/translator.js';
@@ -159,9 +160,15 @@ async function processInteraction(
       }
     }
 
-    if (customId.startsWith('translate_target:')) {
+    if (customId.startsWith('translate_target:') || customId.startsWith('translate_text_target:')) {
       res.json({ type: InteractionResponseType.DeferredUpdateMessage });
       handleTranslateMessageSelection(interaction);
+      return;
+    }
+
+    if (customId.startsWith('music:')) {
+      res.json({ type: InteractionResponseType.DeferredUpdateMessage });
+      handleMusicButton(interaction);
       return;
     }
 
@@ -333,6 +340,15 @@ async function processInteraction(
       data: { flags: MessageFlags.Ephemeral }
     });
     handleAiSlash(interaction);
+    return;
+  }
+
+  if (name === 'code') {
+    res.json({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
+    });
+    handleCodeSlash(interaction);
     return;
   }
 

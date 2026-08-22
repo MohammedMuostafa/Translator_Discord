@@ -112,7 +112,7 @@ export async function callTextModel(
 
   for (const attempt of routeAttempts) {
     const configuredModels = parseModelChain(attempt.rawModels);
-    const models = userAccount
+    const models = (userAccount && attempt.providerKind === 'gemini-native')
       ? filterTextModelsForPlan(userAccount.planId, configuredModels)
       : configuredModels;
 

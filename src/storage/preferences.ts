@@ -4,11 +4,13 @@ import { env } from '../config.js';
 import { normalizeLanguage } from '../languages.js';
 import type { TranslationProvider, TranslationStyle } from '../providers/translator.js';
 
-type Preference = {
+export type Preference = {
   incoming: string;
   outgoing: string;
   provider: TranslationProvider | 'default';
   style: TranslationStyle;
+  quick_translate: boolean;
+  translate_target: string;
 };
 
 type PreferenceFile = Record<string, Partial<Preference>>;
@@ -38,11 +40,18 @@ async function persist(data: PreferenceFile): Promise<void> {
 export async function getPreference(userId: string): Promise<Preference> {
   const data = await load();
   const stored = data[userId] ?? {};
+  const incoming = stored.incoming ? normalizeLanguage(stored.incoming) : normalizeLanguage(env.DEFAULT_INCOMING_LANGUAGE);
+  const outgoing = stored.outgoing ? normalizeLanguage(stored.outgoing) : normalizeLanguage(env.DEFAULT_OUTGOING_LANGUAGE);
+  const translate_target = stored.translate_target ? normalizeLanguage(stored.translate_target) : incoming;
+  const quick_translate = stored.quick_translate !== undefined ? Boolean(stored.quick_translate) : true;
+
   return {
-    incoming: stored.incoming ? normalizeLanguage(stored.incoming) : normalizeLanguage(env.DEFAULT_INCOMING_LANGUAGE),
-    outgoing: stored.outgoing ? normalizeLanguage(stored.outgoing) : normalizeLanguage(env.DEFAULT_OUTGOING_LANGUAGE),
+    incoming,
+    outgoing,
     provider: stored.provider ?? 'default',
-    style: stored.style ?? 'natural'
+    style: stored.style ?? 'natural',
+    quick_translate,
+    translate_target
   };
 }
 
@@ -56,7 +65,9 @@ export async function updatePreference(
     incoming: updates.incoming ? normalizeLanguage(updates.incoming) : current.incoming,
     outgoing: updates.outgoing ? normalizeLanguage(updates.outgoing) : current.outgoing,
     provider: updates.provider ?? current.provider,
-    style: updates.style ?? current.style
+    style: updates.style ?? current.style,
+    quick_translate: updates.quick_translate !== undefined ? Boolean(updates.quick_translate) : current.quick_translate,
+    translate_target: updates.translate_target ? normalizeLanguage(updates.translate_target) : current.translate_target
   };
   data[userId] = next;
 

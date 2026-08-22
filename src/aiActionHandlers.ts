@@ -164,4 +164,11 @@ export function handleAiSlash(interaction:DiscordInteraction):void{
   });
 }
 
-export function handleHelp():Record<string,unknown>{return{content:['## ✨ TD AI — Quick Help','','**Right-click any message → Apps → TD AI**','🌐 Translate • ❓ Smart Answer • 📝 Summarize • 🧠 Explain • 💡 Simplify • ✍️ Rewrite • 💬 Draft Reply','','**Smart Answer controls**','🔄 Change • ✂️ Shorter • 🧠 More Detail • ✏️ Edit Answer • ✅ Use Reply','','**Commands**','`/chat open` private AI chat • `/voicechat join` live voice • `/translate` translation • `/ai` AI tools • `/settings` preferences • `/status` system status'].join('\n'),allowed_mentions:{parse:[]}}}
+export function handleCodeSlash(interaction:DiscordInteraction):void{
+  void runAndEdit(interaction,async()=>{
+    const userId=userIdOf(interaction);const prefs=await getPreference(userId);const prompt=option(interaction,'prompt')?.trim();if(!prompt)throw new Error('Code prompt is required.');const requested=option(interaction,'language')??'my';const language=requested==='my'?prefs.incoming:normalizeLanguage(requested,true);const result=await runAiAction('code',prompt,language);const display=await getDisplayRuntimeSettings();
+    return{content:clipDiscord(`${heading(display)} ${actionLabel('code',display)}${blockGap(display)}${stabilizeRtl(result,language)}`,1900),components:listenComponents(userId,result,language),allowed_mentions:{parse:[]}};
+  });
+}
+
+export function handleHelp():Record<string,unknown>{return{content:['## ✨ TD AI — Quick Help','','**Right-click any message → Apps → TD AI**','🌐 Translate • ❓ Smart Answer • 📝 Summarize • 🧠 Explain • 💡 Simplify • ✍️ Rewrite • 💬 Draft Reply','','**Smart Answer controls**','🔄 Change • ✂️ Shorter • 🧠 More Detail • ✏️ Edit Answer • ✅ Use Reply','','**Commands**','`/chat open` private AI chat • `/code` code & dev AI • `/voicechat join` live voice • `/translate` translation • `/ai` AI tools • `/image` generate visuals • `/video` generate video • `/settings` preferences • `/status` system status'].join('\n'),allowed_mentions:{parse:[]}}}

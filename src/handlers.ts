@@ -11,7 +11,7 @@ import {
 import { env } from './config.js';
 import { transcribeDiscordAttachment } from './services/stt.js';
 import { getPreference, updatePreference } from './storage/preferences.js';
-import { createTranslationSession, getTranslationSession } from './services/translationSessions.js';
+import { createTranslationSession, createTranslationTextSession, getTranslationSession } from './services/translationSessions.js';
 import { createSpeechSession, getSpeechSession } from './services/speechSessions.js';
 import { generateGeminiSpeech, geminiTtsConfigured } from './services/geminiTts.js';
 import { getDisplayRuntimeSettings, type DisplayRuntimeSettings } from './services/runtimeConfig.js';
@@ -249,43 +249,11 @@ export async function handleTranslateMessagePicker(interaction: DiscordInteracti
     throw new Error('This message has no text or supported voice/audio attachment.');
   }
 
-  const sessionId = createTranslationSession(userId, message);
-  return {
-    content: [
-      '🌐 **Translate this message**',
-      'AI will detect the source automatically — including **Egyptian Arabic vs Modern Standard Arabic**.',
-      'Choose the language you want:'
-    ].join('\n'),
-    components: [{
-      type: 1,
-      components: [{
-        type: 3,
-        custom_id: `translate_target:${sessionId}`,
-        placeholder: `Translate to… (My language: ${languageLabel(prefs.incoming)})`.slice(0, 150),
-        min_values: 1,
-        max_values: 1,
-        options: targetSelectOptions(prefs.incoming)
-      }]
-    }],
-    allowed_mentions: { parse: [] }
-  };
-}
-
-export function handleTranslateMessageSelection(interaction: DiscordInteraction): void {
-  void runAndEdit(interaction, async () => {
-    const customId = interaction.data?.custom_id ?? '';
-    const sessionId = customId.startsWith('translate_target:') ? customId.slice('translate_target:'.length) : '';
-    const session = sessionId ? getTranslationSession(sessionId) : undefined;
-    if (!session) throw new Error('This translation menu expired. Right-click the message and choose Apps → Translate again.');
-
-    const userId = userIdOf(interaction);
-    if (session.userId !== userId) throw new Error('This translation menu belongs to another user.');
-
-    const prefs = await getPreference(userId);
+  // If quick_translate is ON, translate directly to translate_target without showing menu
+  if (prefs.quick_translate) {
     const display = await getDisplayRuntimeSettings();
-    const selected = interaction.data?.values?.[0];
-    const target = resolveTarget(selected, prefs.incoming, prefs.incoming);
-    const source = await messageText(session.message);
+    const target = resolveTarget(undefined, prefs.translate_target || prefs.incoming, prefs.incoming);
+    const source = await messageText(message);
     const translated = await translateText(source.text, target, {
       source: source.spokenLanguage ?? 'auto',
       provider: prefs.provider,
@@ -304,6 +272,80 @@ export function handleTranslateMessageSelection(interaction: DiscordInteraction)
       components: buildListenComponents(userId, translated.text, target),
       allowed_mentions: { parse: [] }
     };
+  }
+
+  const sessionId = createTranslationSession(userId, message);
+  return {
+    content: [
+      '🌐 **Translate this message**',
+      'AI will detect the source automatically — including **Egyptian Arabic vs Modern Standard Arabic**.',
+      'Choose the language you want:'
+    ].join('\n'),
+    components: [{
+      type: 1,
+      components: [{
+        type: 3,
+        custom_id: `translate_target:${sessionId}`,
+        placeholder: `Translate to… (Default: ${languageLabel(prefs.translate_target || prefs.incoming)})`.slice(0, 150),
+        min_values: 1,
+        max_values: 1,
+        options: targetSelectOptions(prefs.translate_target || prefs.incoming)
+      }]
+    }],
+    allowed_mentions: { parse: [] }
+  };
+}
+
+export function handleTranslateMessageSelection(interaction: DiscordInteraction): void {
+  void runAndEdit(interaction, async () => {
+    const customId = interaction.data?.custom_id ?? '';
+    const sessionId = customId.startsWith('translate_target:')
+      ? customId.slice('translate_target:'.length)
+      : customId.startsWith('translate_text_target:')
+        ? customId.slice('translate_text_target:'.length)
+        : '';
+    const session = sessionId ? getTranslationSession(sessionId) : undefined;
+    if (!session) throw new Error('This translation menu expired. Try translating again.');
+
+    const userId = userIdOf(interaction);
+    if (session.userId !== userId) throw new Error('This translation menu belongs to another user.');
+
+    const prefs = await getPreference(userId);
+    const display = await getDisplayRuntimeSettings();
+    const selected = interaction.data?.values?.[0];
+    const target = resolveTarget(selected, prefs.translate_target || prefs.incoming, prefs.incoming);
+
+    let rawText = '';
+    let spokenLanguage: string | undefined = undefined;
+
+    if (session.text) {
+      rawText = session.text;
+    } else if (session.message) {
+      const source = await messageText(session.message);
+      rawText = source.text;
+      spokenLanguage = source.spokenLanguage;
+    } else {
+      throw new Error('No text found to translate in this session.');
+    }
+
+    const translated = await translateText(rawText, target, {
+      source: spokenLanguage ?? 'auto',
+      provider: prefs.provider,
+      style: prefs.style
+    });
+
+    return {
+      content: formatTranslation(
+        rawText,
+        translated.text,
+        target,
+        display,
+        translated.detectedSourceLanguage ?? spokenLanguage,
+        translated.provider
+      ),
+      components: buildListenComponents(userId, translated.text, target),
+      allowed_mentions: { parse: [] }
+    };
   });
 }
 
@@ -315,7 +357,31 @@ export function handleTranslateText(interaction: DiscordInteraction): void {
     const text = option<string>(interaction, 'text')?.trim();
     if (!text) throw new Error('Text is required.');
 
-    const target = resolveTarget(option<string>(interaction, 'target'), prefs.incoming, prefs.incoming);
+    const explicitTarget = option<string>(interaction, 'target');
+
+    if (!explicitTarget && !prefs.quick_translate) {
+      const sessionId = createTranslationTextSession(userId, text);
+      return {
+        content: [
+          '🌐 **Translate text**',
+          'Choose the language you want to translate to:'
+        ].join('\n'),
+        components: [{
+          type: 1,
+          components: [{
+            type: 3,
+            custom_id: `translate_text_target:${sessionId}`,
+            placeholder: `Translate to… (Default: ${languageLabel(prefs.translate_target || prefs.incoming)})`.slice(0, 150),
+            min_values: 1,
+            max_values: 1,
+            options: targetSelectOptions(prefs.translate_target || prefs.incoming)
+          }]
+        }],
+        allowed_mentions: { parse: [] }
+      };
+    }
+
+    const target = resolveTarget(explicitTarget, prefs.translate_target || prefs.incoming, prefs.incoming);
     const options = requestOptions(interaction, prefs);
     const translated = await translateText(text, target, options);
     return {
@@ -404,13 +470,25 @@ export function handleListenTts(interaction: DiscordInteraction): void {
 
 export async function handleSettings(interaction: DiscordInteraction): Promise<Record<string, unknown>> {
   const userId = userIdOf(interaction);
+  const quickTranslate = option<boolean>(interaction, 'quick_translate');
+  const translateTarget = option<string>(interaction, 'translate_target');
   const myLanguage = option<string>(interaction, 'my_language') ?? option<string>(interaction, 'incoming');
   const outgoing = option<string>(interaction, 'outgoing');
   const provider = option<string>(interaction, 'provider') as TranslationProvider | 'default' | undefined;
   const style = option<string>(interaction, 'style') as TranslationStyle | undefined;
 
-  const prefs = myLanguage || outgoing || provider || style
+  const hasUpdates =
+    quickTranslate !== undefined ||
+    Boolean(translateTarget) ||
+    Boolean(myLanguage) ||
+    Boolean(outgoing) ||
+    Boolean(provider) ||
+    Boolean(style);
+
+  const prefs = hasUpdates
     ? await updatePreference(userId, {
+        ...(quickTranslate !== undefined ? { quick_translate: quickTranslate } : {}),
+        ...(translateTarget ? { translate_target: translateTarget } : {}),
         ...(myLanguage ? { incoming: myLanguage } : {}),
         ...(outgoing ? { outgoing } : {}),
         ...(provider ? { provider } : {}),
@@ -420,6 +498,9 @@ export async function handleSettings(interaction: DiscordInteraction): Promise<R
 
   return {
     content: [
+      '⚙️ **TD AI — Translation Settings**',
+      `⚡ Quick Translate → **${prefs.quick_translate ? 'ON (Instant)' : 'OFF (Show Menu)'}**`,
+      `🎯 Default Target → **${languageLabel(prefs.translate_target)}**`,
       `🌍 My language → **${languageLabel(prefs.incoming)}**`,
       `⬆️ Outgoing default → **${languageLabel(prefs.outgoing)}**`,
       `🤖 Engine → **${prefs.provider === 'default' ? 'Auto (AI preferred)' : prefs.provider}**`,

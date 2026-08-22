@@ -18,6 +18,9 @@ import {
   setDisplayRuntimeSettings,
   setRuntimeRoute,
   setVoiceRuntimeSettings,
+  testRuntimeProvider,
+  toggleRuntimeModel,
+  toggleRuntimeProvider,
   upsertRuntimeModel,
   upsertRuntimeProvider,
   type DisplayDensity,
@@ -238,12 +241,12 @@ a{color:inherit}
 .brand h1{margin:0;font-size:19px;letter-spacing:-.02em}
 .brand p{margin:3px 0 0;color:var(--muted);font-size:11px}
 .planPill{display:inline-flex;margin-top:5px;padding:3px 7px;border:1px solid var(--line);border-radius:999px;color:#c8d6ea;font-size:10px;background:rgba(255,255,255,.03)}
-.nav{display:grid;gap:6px}
-.nav button,.nav a{display:flex;align-items:center;gap:10px;width:100%;border:0;text-decoration:none;background:transparent;color:var(--muted);padding:10px 12px;border-radius:12px;text-align:left;cursor:pointer;transition:.18s ease;font-size:13px}
+.nav{display:grid;gap:5px}
+.nav button,.nav a{display:flex;align-items:center;gap:10px;width:100%;border:0;text-decoration:none;background:transparent;color:var(--muted);padding:9px 11px;border-radius:11px;text-align:left;cursor:pointer;transition:.18s ease;font-size:13px}
 .nav button:hover,.nav a:hover,.nav button.active{color:var(--text);transform:translateX(2px);background:linear-gradient(90deg,rgba(86,224,255,.12),rgba(162,121,255,.08));box-shadow:inset 0 0 0 1px rgba(103,199,255,.12)}
 .navIcon{width:20px;text-align:center}
-.adminLink{margin-top:12px!important;color:#e3dcff!important;background:linear-gradient(135deg,rgba(162,121,255,.14),rgba(240,122,255,.08))!important;border:1px solid rgba(162,121,255,.24)!important}
-.sideBottom{margin-top:24px}
+.adminLink{margin-top:10px!important;color:#e3dcff!important;background:linear-gradient(135deg,rgba(162,121,255,.14),rgba(240,122,255,.08))!important;border:1px solid rgba(162,121,255,.24)!important}
+.sideBottom{margin-top:20px}
 .main{width:100%;max-width:1500px;margin:auto;padding:34px 38px 70px}
 .top{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:25px;animation:fadeUp .45s ease both}
 .top h2{margin:0;font-size:30px;letter-spacing:-.04em}
@@ -269,6 +272,7 @@ linear-gradient(135deg,rgba(18,28,47,.95),rgba(10,15,27,.92))}
 .heroActions{display:flex;gap:10px;flex-wrap:wrap;margin-top:20px}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:11px;padding:9px 14px;font-weight:750;cursor:pointer;text-decoration:none;transition:.18s ease}
 .btn:hover{transform:translateY(-1px)}
+.btn.small{padding:5px 9px;font-size:11px;border-radius:8px}
 .primary{color:#041018;background:linear-gradient(135deg,var(--cyan),#8ba3ff);box-shadow:0 12px 32px rgba(86,224,255,.13)}
 .secondary{color:var(--text);background:#121c2f;border:1px solid var(--line)}
 .danger{color:#ff9daa;background:rgba(255,113,132,.09);border:1px solid rgba(255,113,132,.25)}
@@ -300,14 +304,20 @@ input:focus,select:focus,textarea:focus{border-color:rgba(86,224,255,.48);box-sh
 .preview{min-height:220px;padding:20px;border-radius:16px;border:1px solid var(--line);background:radial-gradient(circle at 90% 10%,rgba(162,121,255,.1),transparent 35%),#060b13}
 .quickCommand{padding:12px;border-radius:12px;border:1px solid var(--line);background:#050b14;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;color:#cfeaff;word-break:break-word}
 .tableWrap{overflow:auto}.table{width:100%;border-collapse:collapse}.table th,.table td{padding:11px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}.table th{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.09em}
-.routeRow{display:grid;grid-template-columns:1.2fr 1fr 1.5fr 1fr 1.5fr auto;gap:10px;align-items:end;padding:14px 0;border-top:1px solid var(--line)}.routeRow:first-child{border-top:0}
+.categoryHeader{padding:14px 0 6px;margin-top:16px;font-size:14px;font-weight:800;letter-spacing:.02em;color:#cfeaff;border-bottom:1px solid rgba(86,224,255,.18);display:flex;align-items:center;gap:8px}
+.categoryHeader:first-child{margin-top:0}
+.routeRow{display:grid;grid-template-columns:1.2fr 1fr 1.6fr 1fr 1.6fr auto;gap:12px;align-items:start;padding:14px 0;border-top:1px solid var(--line)}.routeRow:first-child{border-top:0}
 .providerRow{display:grid;grid-template-columns:1.2fr 1.1fr 1.6fr .9fr auto;gap:10px;align-items:center;padding:13px 0;border-top:1px solid var(--line)}.providerRow:first-child{border-top:0}
-.modelRow{display:grid;grid-template-columns:1.2fr 1.2fr 1fr 2fr .7fr auto;gap:10px;align-items:center;padding:13px 0;border-top:1px solid var(--line)}.modelRow:first-child{border-top:0}
-.row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.modelRow{display:grid;grid-template-columns:1.2fr 1.1fr .8fr 2fr .8fr auto;gap:10px;align-items:center;padding:13px 0;border-top:1px solid var(--line)}.modelRow:first-child{border-top:0}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .badge{display:inline-flex;padding:3px 7px;border-radius:999px;border:1px solid var(--line);font-size:10px;color:#cbd7e9;background:rgba(255,255,255,.025)}
 .badge.pro{color:#ecdfff;border-color:rgba(162,121,255,.28);background:rgba(162,121,255,.08)}.badge.plus{color:#c9f7ff;border-color:rgba(86,224,255,.24);background:rgba(86,224,255,.06)}
 .badge.kind{color:#c7f8ff;border-color:rgba(86,224,255,.3);background:rgba(86,224,255,.08)}
 .badge.cap{color:#eedcff;border-color:rgba(162,121,255,.3);background:rgba(162,121,255,.08)}
+.badge.disabled{color:#ff9daa;border-color:rgba(255,113,132,.3);background:rgba(255,113,132,.08)}
+.chip{display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:7px;border:1px solid var(--line);background:rgba(255,255,255,.03);color:#b3cbe8;font-size:11px;cursor:pointer;transition:.15s}
+.chip:hover{background:rgba(86,224,255,.12);border-color:rgba(86,224,255,.3);color:#fff;transform:translateY(-1px)}
+.chip.active{background:linear-gradient(135deg,rgba(86,224,255,.2),rgba(162,121,255,.15));border-color:rgba(86,224,255,.4);color:#fff}
 .health{display:flex;gap:8px;align-items:center}.dot{width:8px;height:8px;border-radius:50%;background:var(--green)}.dot.bad{background:var(--red)}.dot.warnDot{background:var(--yellow)}
 .toast{position:fixed;right:22px;bottom:22px;z-index:20;max-width:420px;padding:13px 15px;border:1px solid var(--line);border-radius:13px;background:#10192a;box-shadow:var(--shadow);opacity:0;transform:translateY(80px);transition:.22s}.toast.show{opacity:1;transform:none}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#050b14;border:1px solid var(--line);padding:2px 6px;border-radius:6px}
@@ -451,36 +461,44 @@ function userPage(showAdminButton: boolean): string {
   </section>
 
   <section id="plans" class="section">
-    <div class="grid" id="planGrid"></div>
+    <div class="grid">
+      <div class="card hero">
+        <span class="heroTag">Subscription Plans</span>
+        <h1 style="font-size:46px">Upgrade your<br/><span class="gradientText">AI power & creative tools.</span></h1>
+        <p>Higher tiers unlock advanced models, video generation, and higher credit limits.</p>
+      </div>
+      <div class="card" style="padding:0;background:transparent;border:0;box-shadow:none">
+        <div class="grid" id="planGrid"></div>
+      </div>
+    </div>
   </section>
 
   <section id="personalize" class="section">
     <div class="grid">
       <div class="card half">
-        <h3>Message style</h3>
-        <p class="sub">Customize Markdown formatting, spacing, and preview preferences.</p>
+        <h3>Formatting & Aesthetics</h3>
+        <p class="sub">Personalize how TD formats responses for your user account.</p>
         <div class="settingsGrid">
-          <div class="field"><label>Heading size</label><select id="headingSize"><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></div>
-          <div class="field"><label>Spacing</label><select id="density"><option value="compact">Compact</option><option value="comfortable">Comfortable</option><option value="relaxed">Relaxed</option></select></div>
-          <label class="toggle"><input id="showEmojis" type="checkbox"/> Show section emojis</label>
-          <label class="toggle"><input id="showOriginal" type="checkbox"/> Show original-message preview</label>
+          <div class="field"><label>Heading Size</label><select id="headingSize"><option value="large">Large (#)</option><option value="medium">Medium (##)</option><option value="small">Small (###)</option></select></div>
+          <div class="field"><label>Density</label><select id="density"><option value="compact">Compact</option><option value="comfortable">Comfortable</option><option value="relaxed">Relaxed</option></select></div>
+          <label class="toggle"><input id="showEmojis" type="checkbox"/> Section Emojis</label>
+          <label class="toggle"><input id="showOriginal" type="checkbox"/> Show Original</label>
         </div>
-        <button class="btn primary" id="saveText" style="margin-top:14px">Save message style</button>
+        <button class="btn primary" id="saveText" style="margin-top:14px">Save Display Preferences</button>
       </div>
 
       <div class="card half">
-        <h3>Voice personality</h3>
-        <p class="sub">Choose how TD sounds in your voice channels.</p>
+        <h3>Voice & Audio</h3>
+        <p class="sub">Choose your preferred assistant voice and speed.</p>
         <div class="settingsGrid">
-          <div class="field wide"><label>Voice</label><select id="voiceName"></select></div>
-          <div class="field wide"><label>Response delay</label><select id="delay"><option value="0">Instant</option><option value="250">0.25 sec</option><option value="500">0.5 sec</option><option value="1000">1 sec</option><option value="1500">1.5 sec</option><option value="2000">2 sec</option><option value="3000">3 sec</option></select></div>
+          <div class="field"><label>Voice</label><select id="voiceName"></select></div>
+          <div class="field"><label>Response Delay (ms)</label><input id="delay" type="number" min="0" max="2000" step="50"/></div>
         </div>
-        <button class="btn primary" id="saveVoice" style="margin-top:14px">Save voice</button>
+        <button class="btn primary" id="saveVoice" style="margin-top:14px">Save Voice Preferences</button>
       </div>
 
       <div class="card">
-        <h3>Discord preview</h3>
-        <p class="sub">Approximate preview of your output formatting.</p>
+        <h3>Response Preview</h3>
         <div class="preview" id="preview"></div>
       </div>
     </div>
@@ -488,15 +506,47 @@ function userPage(showAdminButton: boolean): string {
 </main>
 </div>
 <div class="toast" id="toast"></div>
+
 <script>
-const $=s=>document.querySelector(s);let me,prefs,plans=[];
-function fmt(n){return Number(n||0).toLocaleString()}
+const $=s=>document.querySelector(s);
+let me, prefs, plans=[];
 function esc(v){return String(v??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
-function toast(m,b=false){const t=$('#toast');t.textContent=m;t.style.borderColor=b?'var(--red)':'var(--line)';t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2300)}
+function fmt(n){return Number(n||0).toLocaleString()}
+function toast(m,b=false){const t=$('#toast');t.textContent=m;t.style.borderColor=b?'var(--red)':'var(--line)';t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2400)}
 async function api(u,o={}){const r=await fetch(u,{headers:{'content-type':'application/json',...(o.headers||{})},...o});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d}
-function tab(id){document.querySelectorAll('.nav button,.section').forEach(x=>x.classList.remove('active'));document.querySelector('[data-tab="'+id+'"]')?.classList.add('active');$('#'+id)?.classList.add('active');$('#pageTitle').textContent=document.querySelector('[data-tab="'+id+'"]')?.textContent.trim()||id}
-document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>tab(b.dataset.tab));document.addEventListener('click',e=>{const g=e.target.closest('[data-go]');if(g)tab(g.dataset.go)});
-function renderHome(){const u=me.usage;$('#sidePlan').textContent=u.plan.name+' plan';$('#homePlan').textContent=u.plan.name;$('#homeCredits').textContent=fmt(u.remaining);$('#homePercent').textContent=u.percent+'%';$('#homeBar').style.width=Math.min(100,u.percent)+'%';$('#homeReset').textContent='Resets '+new Date(u.account.periodEnd).toLocaleDateString();$('#imageQuota').textContent=u.media.imageGenerate.enabled?fmt(u.media.imageGenerate.remaining)+' generates left':'Not included';$('#videoQuota').textContent=u.media.videoGenerate.enabled?fmt(u.media.videoGenerate.remaining)+' videos left':'Plus / Pro only';const entries=Object.entries(u.byFeature||{}).sort((a,b)=>Number(b[1])-Number(a[1])).slice(0,6);const max=Math.max(1,...entries.map(x=>Number(x[1])));$('#usageMix').innerHTML=entries.length?entries.map(([k,v])=>'<div class="meterRow"><span class="tiny">'+esc(k.replaceAll('_',' '))+'</span><div class="progress"><span style="width:'+Math.max(3,Number(v)/max*100)+'%"></span></div><strong class="tiny">'+fmt(v)+'</strong></div>').join(''):'<div class="tiny">No metered usage yet.</div>';$('#imgLeft').value=u.media.imageGenerate.enabled?u.media.imageGenerate.remaining+' generates • '+u.media.imageEdit.remaining+' edits':'Not available';$('#vidLeft').value=u.media.videoGenerate.enabled?u.media.videoGenerate.remaining:'Not available';applyPlanToStudio()}
+
+function tab(id){
+  document.querySelectorAll('.nav button,.section').forEach(x=>x.classList.remove('active'));
+  document.querySelector('[data-tab="'+id+'"]')?.classList.add('active');
+  $('#'+id)?.classList.add('active');
+  $('#pageTitle').textContent=document.querySelector('[data-tab="'+id+'"]')?.textContent.trim()||id;
+}
+document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>tab(b.dataset.tab));
+document.addEventListener('click',e=>{const g=e.target.closest('[data-go]');if(g)tab(g.dataset.go)});
+
+function renderHome(){
+  if(!me)return;
+  const u=me.usage;
+  $('#sidePlan').textContent=u.plan.name+' Plan';
+  $('#homePlan').textContent=u.plan.name;
+  $('#homeCredits').textContent=fmt(u.remaining);
+  $('#homeReset').textContent='Resets in '+u.daysUntilReset+' days';
+  const pct=Math.min(100,Math.round((u.account.creditsUsed/u.totalCredits)*100))||0;
+  $('#homePercent').textContent=pct+'%';
+  $('#homeBar').style.width=pct+'%';
+  $('#imageQuota').textContent=u.plan.imageGenerate?fmt(u.remainingImages)+' left this month':'Requires Plus or Pro';
+  $('#videoQuota').textContent=u.plan.videoGenerate?fmt(u.remainingVideos)+' left this month':'Requires Plus or Pro';
+  $('#imgLeft').value=u.plan.imageGenerate?fmt(u.remainingImages):'Upgrade needed';
+  $('#vidLeft').value=u.plan.videoGenerate?fmt(u.remainingVideos):'Upgrade needed';
+  $('#usageMix').innerHTML=Object.entries(u.categoryBreakdown).map(([k,v])=>\`
+    <div class="meterRow">
+      <span class="statLabel" style="margin:0">\${esc(k)}</span>
+      <div class="progress"><span style="width:\${Math.min(100,Math.round((v/Math.max(1,u.account.creditsUsed))*100))}%\"></span></div>
+      <span style="font-size:12px;font-weight:700">\${fmt(v)}</span>
+    </div>
+  \`).join('') || '<div class="sub">No usage recorded yet this billing period.</div>';
+}
+
 function renderPlans(){$('#planGrid').innerHTML=plans.map(p=>'<div class="card third" style="padding:0;background:transparent;border:0;box-shadow:none"><div class="planCard '+(p.id==='plus'?'featured':'')+'"><div class="planName">'+esc(p.name)+'</div><div class="planCredits">'+fmt(p.monthlyCredits)+' <small>credits / month</small></div><div class="planFeatures"><div class="planFeature"><span class="yes">✓</span> Voice AI & Chat</div><div class="planFeature"><span class="'+(p.imageGenerate?'yes':'no')+'">'+(p.imageGenerate?'✓':'—')+'</span> '+fmt(p.maxImageJobsPerMonth)+' image generations</div><div class="planFeature"><span class="'+(p.imageEdit?'yes':'no')+'">'+(p.imageEdit?'✓':'—')+'</span> '+fmt(p.maxImageEditJobsPerMonth)+' image edits</div><div class="planFeature"><span class="'+(p.videoGenerate?'yes':'no')+'">'+(p.videoGenerate?'✓':'—')+'</span> '+fmt(p.maxVideoJobsPerMonth)+' videos</div><div class="planFeature"><span class="yes">✓</span> '+(p.id==='pro'?'Premium Tier':'Plan-matched')+' AI Quality</div></div><button class="btn '+(me.usage.account.planId===p.id?'secondary':'primary')+'" style="width:100%;margin-top:8px" disabled>'+(me.usage.account.planId===p.id?'Current plan':'Upgrade coming soon')+'</button></div></div>').join('')}
 function renderPrefs(){const voices=me.voices||[];$('#voiceName').innerHTML=voices.map(v=>'<option value="'+esc(v)+'">'+esc(v)+'</option>').join('');$('#headingSize').value=prefs.headingSize;$('#density').value=prefs.density;$('#showEmojis').checked=prefs.showEmojis;$('#showOriginal').checked=prefs.showOriginal;$('#voiceName').value=prefs.voiceName;$('#delay').value=String(prefs.responseDelayMs);preview()}
 function preview(){const size=$('#headingSize').value,density=$('#density').value,em=$('#showEmojis').checked,orig=$('#showOriginal').checked;const h=size==='large'?'30px':size==='small'?'18px':'23px',gap=density==='compact'?'8px':density==='relaxed'?'24px':'15px';$('#preview').innerHTML='<div style="font-weight:900;font-size:'+h+';margin-bottom:'+gap+'">'+(em?'🌐 ':'')+'Translation</div><div style="line-height:1.7">This is how a clean TD AI response feels inside Discord.</div>'+(orig?'<div class="tiny" style="margin-top:'+gap+';border-left:2px solid var(--line2);padding-left:10px">Original message preview</div>':'')}
@@ -534,10 +584,11 @@ function adminPage(): string {
     <button data-tab="providers"><span class="navIcon">⌁</span> Providers</button>
     <button data-tab="models"><span class="navIcon">◫</span> Model Registry</button>
     <button data-tab="routing"><span class="navIcon">⇄</span> Task Routing</button>
-    <button data-tab="media"><span class="navIcon">✦</span> Media Settings</button>
+    <button data-tab="media"><span class="navIcon">✦</span> Media Studio</button>
     <button data-tab="voice"><span class="navIcon">◉</span> Voice Engine</button>
+    <button data-tab="translation"><span class="navIcon">🌐</span> Translation</button>
     <button data-tab="display"><span class="navIcon">🎨</span> Display Settings</button>
-    <button data-tab="users"><span class="navIcon">♙</span> Users & Plans</button>
+    <button data-tab="users"><span class="navIcon">♙</span> Plans & Credits</button>
     <button data-tab="health"><span class="navIcon">♥</span> Provider Health</button>
   </div>
   <div class="sideBottom"><a class="ghost" style="width:100%;justify-content:center" href="/admin/logout">Log out</a></div>
@@ -570,9 +621,9 @@ function adminPage(): string {
     <h3>Supported Provider Ecosystem</h3>
     <p class="sub">Native protocol adapters and generic OpenAI-compatible endpoints.</p>
     <div class="notice">
-      • <strong>OpenAI Native:</strong> Official GPT-4o, o3, DALL-E, Whisper, TTS<br/>
-      • <strong>Anthropic Native:</strong> Claude 3.7 Sonnet, Claude 3.5 Haiku, Opus<br/>
       • <strong>Google Gemini Native:</strong> Gemini 3.7 Flash, Nano Banana Images, Veo Videos, Live Audio<br/>
+      • <strong>Anthropic Native:</strong> Claude 3.7 Sonnet, Claude 3.5 Haiku, Opus<br/>
+      • <strong>OpenAI Native:</strong> Official GPT-4o, o3, DALL-E, Whisper, TTS<br/>
       • <strong>OpenRouter:</strong> Unified aggregator routing with dynamic headers<br/>
       • <strong>OpenAI-Compatible:</strong> Any custom LLM / Local vLLM / Ollama server
     </div>
@@ -594,10 +645,10 @@ function adminPage(): string {
 <div class="grid">
   <div class="card">
     <div class="row" style="justify-content:space-between">
-      <div><h3>Active AI Providers</h3><p class="sub">Encrypted API keys and connection settings.</p></div>
+      <div><h3>Active AI Providers</h3><p class="sub">Encrypted API keys, connectivity testing, and connection settings.</p></div>
       <button class="btn primary" id="btnShowAddProvider">+ Add New Provider</button>
     </div>
-    <div id="providerList" style="margin-top:12px"></div>
+    <div id="providerList" style="margin-top:14px"></div>
   </div>
 
   <div class="card" id="addProviderCard">
@@ -609,8 +660,8 @@ function adminPage(): string {
       <div class="field"><label>Provider Protocol / Kind</label>
         <select name="kind" id="provKind">
           <option value="gemini-native">Google Gemini Native</option>
-          <option value="openai-native">OpenAI Native (Official API)</option>
           <option value="anthropic-native">Anthropic Native (Claude API)</option>
+          <option value="openai-native">OpenAI Native (Official API)</option>
           <option value="openrouter">OpenRouter</option>
           <option value="openai-compatible">Custom OpenAI-Compatible API</option>
         </select>
@@ -633,14 +684,23 @@ function adminPage(): string {
   <div class="card">
     <div class="row" style="justify-content:space-between">
       <div><h3>Model Registry</h3><p class="sub">Register and assign capability tags to models under your providers.</p></div>
-      <button class="btn primary" id="btnShowAddModel">+ Register Model</button>
+      <div class="row">
+        <button class="btn primary" id="btnShowAddModel">+ Register Model</button>
+      </div>
     </div>
-    <div id="modelList" style="margin-top:12px"></div>
+    <div class="row" style="margin-top:12px;gap:6px" id="modelFilterBar">
+      <button class="chip active" data-mod-filter="all">All</button>
+      <button class="chip" data-mod-filter="text">Text & Dev</button>
+      <button class="chip" data-mod-filter="media">Media Studio</button>
+      <button class="chip" data-mod-filter="voice">Voice & Audio</button>
+    </div>
+    <div id="modelList" style="margin-top:14px"></div>
   </div>
 
   <div class="card" id="addModelCard">
     <h3 id="modelFormTitle">Register / Configure Model</h3>
     <p class="sub">Models registered here become available for task routing and failover chains.</p>
+    <div class="row" id="modelSuggestions" style="margin-bottom:12px"></div>
     <form id="modelForm" class="formGrid">
       <div class="field"><label>Provider</label><select name="providerId" id="modelProvSelect" required></select></div>
       <div class="field"><label>Model ID (exact API identifier)</label><input name="id" id="modelIdInput" required placeholder="e.g. claude-3-7-sonnet-20250219, gpt-4o, gemini-3.7-flash"/></div>
@@ -686,8 +746,11 @@ function adminPage(): string {
     <h3>Image Generation Routing</h3>
     <p class="sub">Image tasks route through your primary provider's models (Gemini Nano Banana or OpenAI DALL-E).</p>
     <div class="notice">
-      <strong>Task: image_generate</strong><br/>
-      Configured under Task Routing. Automatically checks user plan and quality preset (Draft / Standard / Premium).
+      <strong>Task: image_generate & image_edit</strong><br/>
+      Configured under Task Routing. Automatically checks user plan and quality preset (Draft / Standard / Premium).<br/><br/>
+      • <strong>Draft:</strong> Gemini 3.1 Flash Lite Image / DALL-E (Fast)<br/>
+      • <strong>Standard:</strong> Gemini 3.1 Flash Image / Nano Banana<br/>
+      • <strong>Premium:</strong> Gemini 3 Pro Image (4K) / DALL-E 3 HD
     </div>
   </div>
   <div class="card half">
@@ -695,8 +758,14 @@ function adminPage(): string {
     <p class="sub">Video generation uses Google Veo 3.1 or Gemini Omni Flash pipelines.</p>
     <div class="notice">
       <strong>Task: video_generate</strong><br/>
-      Veo Lite, Fast, and Cinematic qualities are allocated according to user tiers (Plus and Pro).
+      Veo Lite, Fast, and Cinematic qualities are allocated according to user tiers (Plus and Pro).<br/><br/>
+      • <strong>Lite:</strong> <code>veo-3.1-lite-generate-preview</code> (Fast short clips)<br/>
+      • <strong>Fast:</strong> <code>veo-3.1-fast-generate-preview</code> (Standard definition)<br/>
+      • <strong>Cinematic:</strong> <code>veo-3.1-generate-preview</code> (High-fidelity Pro tier)
     </div>
+  </div>
+  <div class="card">
+    <div class="warn"><strong>Credit Safety Guarantee:</strong> If a media generation request fails due to provider rate-limits, errors, or content policies, TD AI will NEVER deduct credits from the user's account.</div>
   </div>
 </div>
 </section>
@@ -717,14 +786,39 @@ function adminPage(): string {
     <button class="btn primary" id="saveVoice" style="margin-top:14px">Save Voice Engine</button>
   </div>
   <div class="card half">
-    <h3>Conversation Behavior</h3>
-    <p class="sub">TD AI listens to human speakers and replies automatically after each utterance.</p>
+    <h3>Conversation Behavior & Live Translate</h3>
+    <p class="sub">Continuous PCM output queue with 200ms pre-buffer ensures zero audio stutter on Discord.</p>
     <div class="notice">
-      <strong>Live Voice Tasks:</strong><br/>
+      <strong>Voice Tasks:</strong><br/>
       • <code>voice_live</code>: Interactive conversational Voice AI<br/>
-      • <code>voice_translate</code>: Two-way live voice translation<br/>
+      • <code>voice_translate</code>: Two-way live voice translation (with dual-target session isolation)<br/>
       • <code>stt</code>: Voice message audio transcription<br/>
       • <code>tts</code>: Text-to-speech generation
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- TRANSLATION TAB -->
+<section id="translation" class="section">
+<div class="grid">
+  <div class="card half">
+    <h3>Translation Engine & Intelligence</h3>
+    <p class="sub">TD AI features high-accuracy multi-dialect translation and smart source detection.</p>
+    <div class="notice">
+      • <strong>Arabic Dialect Awareness:</strong> Distinguishes Egyptian Arabic from Modern Standard Arabic.<br/>
+      • <strong>Quick Translate:</strong> When enabled, users translate immediately to their saved default target without seeing a language menu.<br/>
+      • <strong>Multi-Provider Routing:</strong> Route the <code>translation</code> task in the Task Routing matrix to Gemini, OpenAI, Claude, or DeepSeek.
+    </div>
+  </div>
+  <div class="card half">
+    <h3>User Preferences Overview</h3>
+    <p class="sub">Users configure their personal language settings via <code>/settings</code>.</p>
+    <div class="notice">
+      • <code>quick_translate</code>: ON / OFF<br/>
+      • <code>translate_target</code>: Saved target language (Egyptian Arabic, English, MSA, etc.)<br/>
+      • <code>my_language</code>: Personal incoming language for Smart Answer<br/>
+      • <code>outgoing</code>: Default language for <code>/say</code>
     </div>
   </div>
 </div>
@@ -793,6 +887,7 @@ function adminPage(): string {
 <script>
 const $=s=>document.querySelector(s);
 let me, runtime, users, health, voice, models, plans=[];
+let activeModelFilter = 'all';
 
 function esc(v){return String(v??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function fmt(n){return Number(n||0).toLocaleString()}
@@ -834,22 +929,80 @@ function renderProviders(){
       <div class="sub" style="margin:0;word-break:break-all">\${esc(p.apiUrl||'Built-in / Native endpoint')}</div>
       <div>\${esc(p.apiKeyHint)}</div>
       <div class="row">
+        <button class="btn small secondary" data-test-provider="\${esc(p.id)}">Test</button>
         \${p.builtIn ? '<span class="badge">Built-in</span>' : \`
-          <button class="btn secondary" data-edit-provider="\${esc(p.id)}">Edit</button>
-          <button class="btn danger" data-remove-provider="\${esc(p.id)}">Delete</button>
+          <button class="btn small \${p.enabled?'secondary':'primary'}" data-toggle-provider="\${esc(p.id)}">\${p.enabled?'Disable':'Enable'}</button>
+          <button class="btn small secondary" data-edit-provider="\${esc(p.id)}">Edit</button>
+          <button class="btn small danger" data-remove-provider="\${esc(p.id)}">Delete</button>
         \`}
       </div>
     </div>
   \`).join('');
 
-  // Update Model Form Provider select dropdown
   $('#modelProvSelect').innerHTML=runtime.providers.map(p=>\`
-    <option value="\${esc(p.id)}">\${esc(p.name)} (\${esc(p.kind)})</option>
+    <option value="\${esc(p.id)}">\${esc(p.name)} (\${esc(p.kind)})\${p.enabled?'':' [Disabled]'}</option>
   \`).join('');
 }
 
+const TEMPLATES = {
+  'gemini-native': [
+    { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash', caps: ['translation','chat','code','ai_tools','smart_reply'] },
+    { id: 'gemini-3.6-flash', label: 'Gemini 3.6 Flash', caps: ['translation','chat','code','ai_tools','smart_reply'] },
+    { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', caps: ['translation','chat','code','ai_tools','smart_reply'] },
+    { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash Lite', caps: ['translation','chat','code','ai_tools','smart_reply','stt'] },
+    { id: 'gemini-3.1-flash-image', label: 'Nano Banana 2 (Image)', caps: ['image_generate','image_edit'] },
+    { id: 'veo-3.1-fast-generate-preview', label: 'Veo 3.1 Fast Video', caps: ['video_generate'] },
+    { id: 'gemini-3.1-flash-live-preview', label: 'Gemini 3.1 Flash Live', caps: ['voice_live'] }
+  ],
+  'anthropic-native': [
+    { id: 'claude-3-7-sonnet-20250219', label: 'Claude 3.7 Sonnet', caps: ['translation','chat','code','ai_tools','smart_reply'] },
+    { id: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet', caps: ['translation','chat','code','ai_tools','smart_reply'] },
+    { id: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku', caps: ['translation','chat','code','ai_tools','smart_reply'] },
+    { id: 'claude-3-opus-20240229', label: 'Claude 3 Opus', caps: ['translation','chat','code','ai_tools','smart_reply'] }
+  ],
+  'openai-native': [
+    { id: 'gpt-4o', label: 'GPT-4o (Omni)', caps: ['translation','chat','code','ai_tools','smart_reply'] },
+    { id: 'gpt-4o-mini', label: 'GPT-4o Mini', caps: ['translation','chat','code','ai_tools','smart_reply'] },
+    { id: 'o3-mini', label: 'o3-mini (Reasoning)', caps: ['chat','code','ai_tools'] },
+    { id: 'dall-e-3', label: 'DALL-E 3', caps: ['image_generate'] }
+  ],
+  'openrouter': [
+    { id: 'deepseek/deepseek-r1', label: 'DeepSeek R1', caps: ['chat','code','ai_tools'] },
+    { id: 'deepseek/deepseek-chat', label: 'DeepSeek V3', caps: ['translation','chat','code','ai_tools','smart_reply'] },
+    { id: 'anthropic/claude-3.7-sonnet', label: 'Claude 3.7 (OpenRouter)', caps: ['translation','chat','code','ai_tools','smart_reply'] },
+    { id: 'openai/gpt-4o', label: 'GPT-4o (OpenRouter)', caps: ['translation','chat','code','ai_tools','smart_reply'] }
+  ]
+};
+
+function updateModelFormSuggestions(){
+  const provId = $('#modelProvSelect').value;
+  const prov = runtime.providers.find(p=>p.id===provId);
+  const kind = prov?.kind || 'gemini-native';
+  const tmpls = TEMPLATES[kind] || [];
+
+  $('#modelSuggestions').innerHTML = tmpls.length ? '<span class="sub" style="margin:0 4px 0 0">Suggested:</span>' + tmpls.map(t=>\`
+    <button type="button" class="chip" data-fill-model="\${esc(t.id)}" data-label="\${esc(t.label)}" data-caps="\${esc(t.caps.join(','))}">+ \${esc(t.label)}</button>
+  \`).join('') : '';
+
+  const allowedCaps = runtime.providerKindCapabilities[kind] || [];
+  document.querySelectorAll('#capabilitiesCheckboxes label').forEach(lbl=>{
+    const input = lbl.querySelector('input');
+    const allowed = allowedCaps.includes(input.value);
+    input.disabled = !allowed;
+    lbl.style.opacity = allowed ? '1' : '0.4';
+    if(!allowed) input.checked = false;
+  });
+}
+
 function renderModels(){
-  $('#modelList').innerHTML=runtime.models.map(m=>{
+  const filtered = runtime.models.filter(m=>{
+    if(activeModelFilter==='text') return m.capabilities.some(c=>['translation','chat','code','ai_tools','smart_reply'].includes(c));
+    if(activeModelFilter==='media') return m.capabilities.some(c=>['image_generate','image_edit','video_generate'].includes(c));
+    if(activeModelFilter==='voice') return m.capabilities.some(c=>['voice_live','voice_translate','stt','tts'].includes(c));
+    return true;
+  });
+
+  $('#modelList').innerHTML=filtered.map(m=>{
     const prov=runtime.providers.find(p=>p.id===m.providerId);
     return \`
       <div class="modelRow">
@@ -861,69 +1014,100 @@ function renderModels(){
           <span class="badge">\${esc(prov?.name||m.providerId)}</span>
         </div>
         <div>
-          <span class="badge pro">Priority \${m.priority||50}</span>
+          <span class="badge pro">P \${m.priority||50}</span>
         </div>
         <div class="row">
           \${m.capabilities.map(c=>'<span class="badge cap">'+esc(c)+'</span>').join(' ')}
         </div>
         <div>
-          <span class="badge \${m.enabled?'plus':''}">\${m.enabled?'Enabled':'Disabled'}</span>
+          <span class="badge \${m.enabled?'plus':'disabled'}">\${m.enabled?'Enabled':'Disabled'}</span>
         </div>
         <div class="row">
-          <button class="btn secondary" data-edit-model="\${esc(m.providerId)}:::\${esc(m.id)}">Edit</button>
-          <button class="btn danger" data-remove-model="\${esc(m.providerId)}:::\${esc(m.id)}">Delete</button>
+          <button class="btn small \${m.enabled?'secondary':'primary'}" data-toggle-model="\${esc(m.providerId)}:::\${esc(m.id)}">\${m.enabled?'Disable':'Enable'}</button>
+          <button class="btn small secondary" data-edit-model="\${esc(m.providerId)}:::\${esc(m.id)}">Edit</button>
+          <button class="btn small danger" data-remove-model="\${esc(m.providerId)}:::\${esc(m.id)}">Delete</button>
         </div>
       </div>
     \`;
-  }).join('') || '<div class="sub">No models registered yet.</div>';
+  }).join('') || '<div class="sub">No models match this filter.</div>';
 
-  // Render capability checkboxes in Add Model form
   $('#capabilitiesCheckboxes').innerHTML=runtime.tasks.map(t=>\`
     <label class="toggle" style="font-size:12px;padding:6px 10px;min-height:auto">
       <input type="checkbox" name="capabilities" value="\${esc(t.id)}"/> \${esc(t.label)}
     </label>
   \`).join('');
+
+  updateModelFormSuggestions();
 }
 
 function renderRoutes(){
-  $('#routeRows').innerHTML=runtime.tasks.map(t=>{
-    const r=runtime.routes[t.id]||{};
-    const availableProviders=providersForTask(t.id);
-    const primaryProv=r.providerId||availableProviders[0]?.id||'';
+  const categories = [
+    { title: '📝 Text, Code & Intelligence', tasks: runtime.tasks.filter(t=>['translation','chat','code','ai_tools','smart_reply'].includes(t.id)) },
+    { title: '🎨 Creative Media Studio', tasks: runtime.tasks.filter(t=>['image_generate','image_edit','video_generate'].includes(t.id)) },
+    { title: '🎙️ Voice & Audio AI', tasks: runtime.tasks.filter(t=>['voice_live','voice_translate','stt','tts'].includes(t.id)) }
+  ];
 
-    return \`
-      <div class="routeRow" data-task="\${esc(t.id)}">
-        <div>
-          <strong>\${esc(t.label)}</strong>
-          <div class="sub" style="margin:2px 0 0"><code>\${esc(t.id)}</code></div>
+  $('#routeRows').innerHTML=categories.map(cat=>\`
+    <div class="categoryHeader">\${cat.title}</div>
+    \${cat.tasks.map(t=>{
+      const r=runtime.routes[t.id]||{};
+      const availableProviders=providersForTask(t.id);
+      const primaryProv=r.providerId||availableProviders[0]?.id||'';
+
+      const primaryModels=runtime.models.filter(m=>m.providerId===primaryProv && m.capabilities.includes(t.id) && m.enabled);
+      const fbProv=r.fallbackProviderId||'';
+      const fbModels=runtime.models.filter(m=>m.providerId===fbProv && m.capabilities.includes(t.id) && m.enabled);
+
+      return \`
+        <div class="routeRow" data-task="\${esc(t.id)}">
+          <div>
+            <strong>\${esc(t.label)}</strong>
+            <div class="sub" style="margin:2px 0 0"><code>\${esc(t.id)}</code></div>
+          </div>
+          <div class="field">
+            <label>Primary Provider</label>
+            <select data-field="providerId" class="routeProvSelect">
+              \${availableProviders.map(p=>\`<option value="\${esc(p.id)}" \${p.id===r.providerId?'selected':''}>\${esc(p.name)}</option>\`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label>Primary Model Chain</label>
+            <input data-field="model" value="\${esc(r.model||'')}" placeholder="e.g. gpt-4o | gpt-4o-mini"/>
+            \${primaryModels.length ? \`
+              <div class="row" style="margin-top:3px">
+                <span style="font-size:10px;color:var(--muted)">Pick:</span>
+                \${primaryModels.slice(0,3).map(pm=>\`
+                  <button type="button" class="chip" style="padding:1px 6px;font-size:10px" data-append-model="\${esc(pm.id)}">+\${esc(pm.label)}</button>
+                \`).join('')}
+              </div>
+            \` : ''}
+          </div>
+          <div class="field">
+            <label>Fallback Provider (Optional)</label>
+            <select data-field="fallbackProviderId" class="routeFbSelect">
+              <option value="">None</option>
+              \${availableProviders.map(p=>\`<option value="\${esc(p.id)}" \${p.id===r.fallbackProviderId?'selected':''}>\${esc(p.name)}</option>\`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label>Fallback Model Chain</label>
+            <input data-field="fallbackModel" value="\${esc(r.fallbackModel||'')}" placeholder="e.g. gemini-3.7-flash"/>
+            \${fbModels.length ? \`
+              <div class="row" style="margin-top:3px">
+                <span style="font-size:10px;color:var(--muted)">Pick:</span>
+                \${fbModels.slice(0,3).map(fm=>\`
+                  <button type="button" class="chip" style="padding:1px 6px;font-size:10px" data-append-fb-model="\${esc(fm.id)}">+\${esc(fm.label)}</button>
+                \`).join('')}
+              </div>
+            \` : ''}
+          </div>
+          <div style="padding-top:19px">
+            <button class="btn primary" data-save-route="\${esc(t.id)}">Save</button>
+          </div>
         </div>
-        <div class="field">
-          <label>Primary Provider</label>
-          <select data-field="providerId">
-            \${availableProviders.map(p=>\`<option value="\${esc(p.id)}" \${p.id===r.providerId?'selected':''}>\${esc(p.name)}</option>\`).join('')}
-          </select>
-        </div>
-        <div class="field">
-          <label>Primary Model Chain</label>
-          <input data-field="model" value="\${esc(r.model||'')}" placeholder="e.g. gpt-4o | gpt-4o-mini"/>
-        </div>
-        <div class="field">
-          <label>Fallback Provider (Optional)</label>
-          <select data-field="fallbackProviderId">
-            <option value="">None</option>
-            \${availableProviders.map(p=>\`<option value="\${esc(p.id)}" \${p.id===r.fallbackProviderId?'selected':''}>\${esc(p.name)}</option>\`).join('')}
-          </select>
-        </div>
-        <div class="field">
-          <label>Fallback Model Chain</label>
-          <input data-field="fallbackModel" value="\${esc(r.fallbackModel||'')}" placeholder="e.g. gemini-3.7-flash"/>
-        </div>
-        <div>
-          <button class="btn primary" data-save-route="\${esc(t.id)}">Save</button>
-        </div>
-      </div>
-    \`;
-  }).join('');
+      \`;
+    }).join('')}
+  \`).join('');
 }
 
 function renderVoice(){
@@ -974,7 +1158,7 @@ function renderUsersAndPlans(){
       <td><input data-used type="number" value="\${a.creditsUsed}"/></td>
       <td><input data-bonus type="number" value="\${a.bonusCredits}"/></td>
       <td><input data-disabled type="checkbox" \${a.disabled?'checked':''}/></td>
-      <td><div class="row"><button class="btn secondary" data-save-user>Save</button><button class="btn danger" data-reset-user>Reset</button></div></td>
+      <td><div class="row"><button class="btn small secondary" data-save-user>Save</button><button class="btn small danger" data-reset-user>Reset</button></div></td>
     </tr>\`;
   }).join('');
 
@@ -1038,7 +1222,6 @@ async function refresh(){
 // Event Handlers
 // ---------------------------------------------------------------------------
 
-// Providers Form
 $('#provKind').onchange=e=>{
   const k=e.target.value;
   $('#provUrlField').style.display = k==='openai-compatible' ? 'grid' : 'none';
@@ -1048,6 +1231,10 @@ $('#provKind').onchange=e=>{
   else if(k==='gemini-native') $('#provUrl').value='';
 };
 $('#provKind').dispatchEvent(new Event('change'));
+
+$('#modelProvSelect').onchange=()=>{
+  updateModelFormSuggestions();
+};
 
 $('#providerForm').onsubmit=async e=>{
   e.preventDefault();
@@ -1075,7 +1262,6 @@ $('#btnShowAddProvider').onclick=()=>{
   $('#provName').focus();
 };
 
-// Model Form
 $('#modelForm').onsubmit=async e=>{
   e.preventDefault();
   try{
@@ -1107,9 +1293,83 @@ $('#btnShowAddModel').onclick=()=>{
   $('#modelIdInput').focus();
 };
 
-// Click Delegation for Action Buttons
+document.querySelectorAll('#modelFilterBar [data-mod-filter]').forEach(b=>{
+  b.onclick=()=>{
+    document.querySelectorAll('#modelFilterBar [data-mod-filter]').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    activeModelFilter = b.dataset.modFilter;
+    renderModels();
+  };
+});
+
 document.addEventListener('click', async e=>{
-  // Save Route
+  const fm=e.target.closest('[data-fill-model]');
+  if(fm){
+    $('#modelIdInput').value = fm.dataset.fillModel;
+    $('#modelLabelInput').value = fm.dataset.label;
+    const caps = (fm.dataset.caps || '').split(',');
+    document.querySelectorAll('#capabilitiesCheckboxes input').forEach(cb=>{
+      cb.checked = caps.includes(cb.value);
+    });
+    return;
+  }
+
+  const am=e.target.closest('[data-append-model]');
+  if(am){
+    const row=am.closest('.routeRow');
+    const input=row.querySelector('[data-field="model"]');
+    const cur=input.value.trim();
+    input.value = cur ? cur + ' | ' + am.dataset.appendModel : am.dataset.appendModel;
+    return;
+  }
+
+  const afm=e.target.closest('[data-append-fb-model]');
+  if(afm){
+    const row=afm.closest('.routeRow');
+    const input=row.querySelector('[data-field="fallbackModel"]');
+    const cur=input.value.trim();
+    input.value = cur ? cur + ' | ' + afm.dataset.appendFbModel : afm.dataset.appendFbModel;
+    return;
+  }
+
+  const tp=e.target.closest('[data-toggle-provider]');
+  if(tp){
+    try{
+      await api('/admin/api/providers/'+encodeURIComponent(tp.dataset.toggleProvider)+'/toggle',{method:'PUT'});
+      toast('Provider status updated');
+      await refresh();
+    }catch(x){toast(x.message,true)}
+    return;
+  }
+
+  const tm=e.target.closest('[data-toggle-model]');
+  if(tm){
+    const [pId, mId]=tm.dataset.toggleModel.split(':::');
+    try{
+      await api('/admin/api/models/'+encodeURIComponent(pId)+'/'+encodeURIComponent(mId)+'/toggle',{method:'PUT'});
+      toast('Model status updated');
+      await refresh();
+    }catch(x){toast(x.message,true)}
+    return;
+  }
+
+  const testBtn=e.target.closest('[data-test-provider]');
+  if(testBtn){
+    const id = testBtn.dataset.testProvider;
+    testBtn.textContent = 'Testing…';
+    testBtn.disabled = true;
+    try{
+      const res = await api('/admin/api/providers/'+encodeURIComponent(id)+'/test', { method:'POST' });
+      toast('✅ ' + (res.message || 'Connected successfully'));
+    }catch(x){
+      toast('❌ ' + x.message, true);
+    }finally{
+      testBtn.textContent = 'Test';
+      testBtn.disabled = false;
+    }
+    return;
+  }
+
   const sr=e.target.closest('[data-save-route]');
   if(sr){
     const t=sr.dataset.saveRoute;
@@ -1130,7 +1390,6 @@ document.addEventListener('click', async e=>{
     return;
   }
 
-  // Delete Provider
   const rp=e.target.closest('[data-remove-provider]');
   if(rp){
     if(!confirm('Delete this provider? Associated models and routes will be cleaned up.')) return;
@@ -1142,7 +1401,6 @@ document.addEventListener('click', async e=>{
     return;
   }
 
-  // Edit Provider
   const ep=e.target.closest('[data-edit-provider]');
   if(ep){
     const id=ep.dataset.editProvider;
@@ -1160,7 +1418,6 @@ document.addEventListener('click', async e=>{
     return;
   }
 
-  // Delete Model
   const rm=e.target.closest('[data-remove-model]');
   if(rm){
     if(!confirm('Delete this model from registry?')) return;
@@ -1173,7 +1430,6 @@ document.addEventListener('click', async e=>{
     return;
   }
 
-  // Edit Model
   const em=e.target.closest('[data-edit-model]');
   if(em){
     const [pId, mId]=em.dataset.editModel.split(':::');
@@ -1193,7 +1449,6 @@ document.addEventListener('click', async e=>{
     return;
   }
 
-  // Save User
   const su=e.target.closest('[data-save-user]');
   if(su){
     const tr=su.closest('tr'), id=tr.dataset.user;
@@ -1215,7 +1470,6 @@ document.addEventListener('click', async e=>{
     return;
   }
 
-  // Reset User
   const ru=e.target.closest('[data-reset-user]');
   if(ru){
     const id=ru.closest('tr').dataset.user;
@@ -1227,7 +1481,6 @@ document.addEventListener('click', async e=>{
     return;
   }
 
-  // Save Plan
   const sp=e.target.closest('[data-save-plan]');
   if(sp){
     const r=sp.closest('[data-plan-row]'), id=r.dataset.planRow;
@@ -1251,7 +1504,6 @@ document.addEventListener('click', async e=>{
   }
 });
 
-// Voice Save
 $('#saveVoice').onclick=async()=>{
   try{
     await api('/admin/api/voice',{
@@ -1269,7 +1521,6 @@ $('#saveVoice').onclick=async()=>{
   }catch(x){toast(x.message,true)}
 };
 
-// Display Save
 $('#saveDisplay').onclick=async()=>{
   try{
     await api('/admin/api/display',{
@@ -1292,7 +1543,6 @@ $('#saveDisplay').onclick=async()=>{
   }catch(x){toast(x.message,true)}
 };
 
-// Quick Presets
 $('#btnPresetGemini').onclick=async()=>{
   for(const t of runtime.tasks){
     try{
@@ -1626,6 +1876,27 @@ export function registerAdminDashboard(app: Express): void {
     }
   });
 
+  router.post('/api/providers/:id/test', requireAdmin, async (req, res) => {
+    try {
+      const result = await testRuntimeProvider(String(req.params.id ?? ''));
+      res.json(result);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Provider connectivity test failed.' });
+    }
+  });
+
+  router.put('/api/providers/:id/toggle', requireAdmin, async (req, res) => {
+    try {
+      const enabled = await toggleRuntimeProvider(
+        String(req.params.id ?? ''),
+        typeof req.body.enabled === 'boolean' ? req.body.enabled : undefined
+      );
+      res.json({ ok: true, enabled });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Could not toggle provider.' });
+    }
+  });
+
   router.delete('/api/providers/:id', requireAdmin, async (req, res) => {
     try {
       await deleteRuntimeProvider(String(req.params.id ?? ''));
@@ -1649,6 +1920,19 @@ export function registerAdminDashboard(app: Express): void {
       res.json({ ok: true, id });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : 'Could not save model.' });
+    }
+  });
+
+  router.put('/api/models/:providerId/:modelId/toggle', requireAdmin, async (req, res) => {
+    try {
+      const enabled = await toggleRuntimeModel(
+        String(req.params.providerId ?? ''),
+        String(req.params.modelId ?? ''),
+        typeof req.body.enabled === 'boolean' ? req.body.enabled : undefined
+      );
+      res.json({ ok: true, enabled });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Could not toggle model.' });
     }
   });
 

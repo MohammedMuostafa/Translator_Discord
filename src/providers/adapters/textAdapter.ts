@@ -161,17 +161,25 @@ function extractOpenAiText(raw: string): string {
     choices?: Array<{
       message?: {
         content?: string | Array<{ type?: string; text?: string }>;
+        reasoning_content?: string;
       };
+      text?: string;
     }>;
   };
-  const content = data.choices?.[0]?.message?.content;
-  return (
-    typeof content === 'string'
-      ? content
-      : Array.isArray(content)
-        ? content.map((part) => part.text ?? '').join('')
-        : ''
-  ).trim();
+  const choice = data.choices?.[0];
+  const content = choice?.message?.content;
+  if (typeof content === 'string' && content.trim()) return content.trim();
+  if (Array.isArray(content)) {
+    const text = content.map((part) => part.text ?? '').join('').trim();
+    if (text) return text;
+  }
+  if (typeof choice?.message?.reasoning_content === 'string' && choice.message.reasoning_content.trim()) {
+    return choice.message.reasoning_content.trim();
+  }
+  if (typeof choice?.text === 'string' && choice.text.trim()) {
+    return choice.text.trim();
+  }
+  return '';
 }
 
 async function requestOpenAiLike(

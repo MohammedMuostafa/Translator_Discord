@@ -41,10 +41,13 @@ import { runWithUsageUser } from './usageContext.js';
 import { getUserPersonalization } from './userPersonalization.js';
 import { translateText } from '../providers/translator.js';
 import {
+  adjustGuildMusicVolume,
   enqueueMusic as enqueueGuildMusic,
+  getGuildMusicVolume,
   musicQueue as guildMusicQueue,
   pauseMusic as pauseGuildMusic,
   resumeMusic as resumeGuildMusic,
+  setGuildMusicVolume,
   skipMusic as skipGuildMusic,
   stopMusic as stopGuildMusic,
   type MusicQueueSnapshot,
@@ -94,6 +97,15 @@ type TranslationLiveConnection = {
   model: string;
 };
 
+interface LiveAudioJitterBuffer {
+  queue: Buffer[];
+  bufferedBytes: number;
+  isPlaying: boolean;
+  timer?: NodeJS.Timeout;
+  activeTargetLanguage?: string;
+  lastChunkAt: number;
+}
+
 interface VoiceAiSession {
   guildId: string;
   channelId: string;
@@ -133,6 +145,7 @@ interface VoiceAiSession {
   liveModel?: string;
   liveReconnecting?: boolean;
   musicActive: boolean;
+  jitterBuffer?: LiveAudioJitterBuffer;
 }
 
 const sessions = new Map<string, VoiceAiSession>();
@@ -415,7 +428,128 @@ async function transcribeWakePcm(
   }
 }
 
+const FRAME_BYTES_48_STEREO_20MS = 3840; // 48000 * 2 * 2 * 0.02 = 3840 bytes per 20ms frame
+const PREBUFFER_BYTES = 38400; // ~200ms pre-buffer (10 frames)
+
+function getOrCreateJitterBuffer(session: VoiceAiSession): LiveAudioJitterBuffer {
+  session.jitterBuffer ??= {
+    queue: [],
+    bufferedBytes: 0,
+    isPlaying: false,
+    lastChunkAt: 0
+  };
+  return session.jitterBuffer;
+}
+
+function clearJitterBuffer(session: VoiceAiSession): void {
+  const jb = session.jitterBuffer;
+  if (!jb) return;
+  if (jb.timer) {
+    clearInterval(jb.timer);
+    jb.timer = undefined;
+  }
+  jb.queue = [];
+  jb.bufferedBytes = 0;
+  jb.isPlaying = false;
+  jb.activeTargetLanguage = undefined;
+  jb.lastChunkAt = 0;
+}
+
+function enqueueLiveAudioChunk(
+  session: VoiceAiSession,
+  pcm48Stereo: Buffer,
+  targetLanguageCode?: string
+): void {
+  if (!pcm48Stereo.byteLength) return;
+  const jb = getOrCreateJitterBuffer(session);
+  const now = Date.now();
+
+  if (session.purpose === 'translation' && targetLanguageCode) {
+    // Prevent overlapping audio from dual target sessions
+    if (jb.activeTargetLanguage && jb.activeTargetLanguage !== targetLanguageCode) {
+      if (now - jb.lastChunkAt < 1800) {
+        // Discard cross-talk from the other target session
+        return;
+      }
+    }
+    jb.activeTargetLanguage = targetLanguageCode;
+  }
+
+  jb.lastChunkAt = now;
+  jb.queue.push(pcm48Stereo);
+  jb.bufferedBytes += pcm48Stereo.byteLength;
+
+  if (!jb.isPlaying && jb.bufferedBytes >= PREBUFFER_BYTES) {
+    startJitterPlayback(session);
+  }
+}
+
+function flushLiveAudioJitter(session: VoiceAiSession): void {
+  const jb = session.jitterBuffer;
+  if (!jb || jb.isPlaying || jb.bufferedBytes === 0) return;
+  startJitterPlayback(session);
+}
+
+function startJitterPlayback(session: VoiceAiSession): void {
+  const jb = getOrCreateJitterBuffer(session);
+  if (jb.isPlaying) return;
+  jb.isPlaying = true;
+
+  if (jb.timer) clearInterval(jb.timer);
+
+  jb.timer = setInterval(() => {
+    const currentSession = sessions.get(session.guildId);
+    if (!currentSession || currentSession !== session || !jb.isPlaying) {
+      if (jb.timer) clearInterval(jb.timer);
+      jb.timer = undefined;
+      return;
+    }
+
+    if (jb.bufferedBytes === 0) {
+      if (Date.now() - jb.lastChunkAt > 350) {
+        if (jb.timer) clearInterval(jb.timer);
+        jb.timer = undefined;
+        jb.isPlaying = false;
+        jb.activeTargetLanguage = undefined;
+      }
+      return;
+    }
+
+    let needed = FRAME_BYTES_48_STEREO_20MS;
+    const parts: Buffer[] = [];
+
+    while (needed > 0 && jb.queue.length > 0) {
+      const first = jb.queue[0];
+      if (!first) {
+        jb.queue.shift();
+        continue;
+      }
+      if (first.byteLength <= needed) {
+        parts.push(first);
+        needed -= first.byteLength;
+        jb.bufferedBytes -= first.byteLength;
+        jb.queue.shift();
+      } else {
+        parts.push(first.subarray(0, needed));
+        jb.queue[0] = first.subarray(needed);
+        jb.bufferedBytes -= needed;
+        needed = 0;
+      }
+    }
+
+    if (parts.length > 0) {
+      const frame = parts.length === 1 ? parts[0] : Buffer.concat(parts);
+      try {
+        ensureLivePlayback(session).write(frame);
+      } catch (err) {
+        console.error('Audio write to Discord playback failed:', err);
+      }
+    }
+  }, 20);
+}
+
 function stopPlayback(session: VoiceAiSession): void {
+  clearJitterBuffer(session);
   const stream = session.outputStream;
   session.outputStream = undefined;
   if (stream) {
@@ -434,9 +568,7 @@ function ensureLivePlayback(session: VoiceAiSession): PassThrough {
 }
 
 function finishLivePlayback(session: VoiceAiSession): void {
-  const stream = session.outputStream;
-  session.outputStream = undefined;
-  if (stream && !stream.destroyed) stream.end();
+  flushLiveAudioJitter(session);
 }
 
 async function armFollowupWindowAfterPlayback(
@@ -1635,12 +1767,12 @@ function handleLiveMessage(session: VoiceAiSession, message: LiveServerMessage):
     session.busy = true;
     const pcm24 = Buffer.from(data, 'base64');
     if (pcm24.byteLength) {
-      ensureLivePlayback(session).write(geminiPcm24MonoToDiscord48Stereo(pcm24));
+      enqueueLiveAudioChunk(session, geminiPcm24MonoToDiscord48Stereo(pcm24));
     }
   }
 
   if (content.turnComplete) {
-    finishLivePlayback(session);
+    flushLiveAudioJitter(session);
     session.busy = false;
     session.turns += 1;
 
@@ -1774,11 +1906,17 @@ function handleLiveTranslationMessage(
       if (!data) continue;
       const pcm24 = Buffer.from(data, 'base64');
       if (pcm24.byteLength) {
-        ensureLivePlayback(session).write(
-          geminiPcm24MonoToDiscord48Stereo(pcm24)
+        enqueueLiveAudioChunk(
+          session,
+          geminiPcm24MonoToDiscord48Stereo(pcm24),
+          targetLanguageCode
         );
       }
     }
+  }
+
+  if (content.turnComplete) {
+    flushLiveAudioJitter(session);
   }
 }
 
@@ -2816,6 +2954,18 @@ export function stopVoiceMusic(guildId: string): boolean {
 
 export function voiceMusicQueue(guildId: string): MusicQueueSnapshot {
   return guildMusicQueue(guildId);
+}
+
+export function setVoiceMusicVolume(guildId: string, volume: number): number {
+  return setGuildMusicVolume(guildId, volume);
+}
+
+export function adjustVoiceMusicVolume(guildId: string, delta: number): number {
+  return adjustGuildMusicVolume(guildId, delta);
+}
+
+export function getVoiceMusicVolume(guildId: string): number {
+  return getGuildMusicVolume(guildId);
 }
 
 export async function writeVoiceChat(
