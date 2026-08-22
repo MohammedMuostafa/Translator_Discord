@@ -1436,8 +1436,8 @@ async function connectGeminiLive(session: VoiceAiSession): Promise<void> {
         parts: [{
           text: languageSystemInstruction(
             session.language,
-            control.activationMode === 'wake-word',
-            control.wakeWords
+            false,
+            []
           )
         }]
       },
@@ -1611,18 +1611,6 @@ async function createSession(
 
   if (
     purpose === 'conversation' &&
-    engine === 'live' &&
-    control.activationMode === 'wake-word' &&
-    !sttConfigured()
-  ) {
-    connection.destroy();
-    throw new Error(
-      'Wake-word mode needs Speech Recognition (STT) to detect TD before forwarding a turn to Gemini Live.'
-    );
-  }
-
-  if (
-    purpose === 'conversation' &&
     engine === 'cascade' &&
     (
       !sttConfigured() ||
@@ -1688,17 +1676,10 @@ async function createSession(
   try {
     if (engine === 'live') {
       await connectGeminiLive(session);
-
-      if (
-        control.activationMode ===
-        'wake-word'
-      ) {
-        attachWakeGatedLiveReceiver(
-          session
-        );
-      } else {
-        attachLiveReceiver(session);
-      }
+      // v3.14.5: conversation is always-listening.
+      // Every allowed human speaker in the channel is forwarded directly
+      // to Gemini Live; no wake word / TD name is required.
+      attachLiveReceiver(session);
     } else {
       attachCascadeReceiver(session);
     }

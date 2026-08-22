@@ -29,7 +29,7 @@ let cached: VoiceControlSettings | undefined;
 let writeChain = Promise.resolve();
 
 const defaults: VoiceControlSettings = {
-  activationMode: 'wake-word',
+  activationMode: 'always',
   wakeWords: ['td', 'td ai', 'translator', 'تي دي', 'يا تي دي'],
   wakeResponse: 'Yes?',
   wakeWindowMs: 3_000,
@@ -50,7 +50,7 @@ function sanitize(value: Partial<VoiceControlSettings>): VoiceControlSettings {
     : defaults.wakeWords;
 
   return {
-    activationMode: value.activationMode === 'always' ? 'always' : 'wake-word',
+    activationMode: 'always',
     wakeWords: wakeWords.length ? wakeWords : defaults.wakeWords,
     wakeResponse: String(value.wakeResponse ?? defaults.wakeResponse).slice(0, 120),
     wakeWindowMs: Math.min(

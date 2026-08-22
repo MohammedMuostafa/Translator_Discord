@@ -1,0 +1,25 @@
+{
+  "version": "3.14.5",
+  "files": [
+    {
+      "path": "docs/guides/V3.14.5-ALWAYS-LISTENING-AR.md",
+      "bytes": 1671,
+      "sha256": "b7ab7564b3b81de0ba5ba061a404d7fcf4084aa4bf5862865f879e5d44cb5bf3"
+    },
+    {
+      "path": "src/adminDashboard.ts",
+      "bytes": 72856,
+      "sha256": "e56fa1488cad0c3da15e35836b5458bb577db074464f1ec76c9d42e1fcc0e752"
+    },
+    {
+      "path": "src/services/voiceAi.ts",
+      "bytes": 51810,
+      "sha256": "0896cbd8430a1f9f0d699be3a11a2d986e3d7fa95e28c3a9736e88cf0d3c4b42"
+    },
+    {
+      "path": "src/services/voiceControl.ts",
+      "bytes": 4348,
+      "sha256": "e94fef26733d1debab140f985176b21b207a5324bbcb6d2a2a77468020dcc970"
+    }
+  ]
+}
