@@ -7,10 +7,12 @@ import {
 import {
   assertFeatureAccess,
   estimateTextCredits,
+  getUserAccount,
   recordProviderHealth,
   recordUsage
 } from './billingStore.js';
 import { currentUsageUserId } from './usageContext.js';
+import { filterTextModelsForPlan } from './modelCatalog.js';
 
 export type ModelMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -234,9 +236,35 @@ export async function callTextModel(
 }> {
   const route = await getTextTaskRoute(task);
   const userId = currentUsageUserId();
-  if (userId) await assertFeatureAccess(userId, taskFeature(task));
-  const models = parseModelChain(options.modelOverride?.trim() || route.model);
-  const timeoutMs = options.timeoutMs ?? 60_000;
+
+  if (userId) {
+    await assertFeatureAccess(
+      userId,
+      taskFeature(task)
+    );
+  }
+
+  const configuredModels =
+    parseModelChain(
+      options.modelOverride?.trim() ||
+      route.model
+    );
+
+  const models =
+    userId
+      ? filterTextModelsForPlan(
+          (
+            await getUserAccount(
+              userId
+            )
+          ).planId,
+          configuredModels
+        )
+      : configuredModels;
+
+  const timeoutMs =
+    options.timeoutMs ??
+    60_000;
 
   if (!models.length) throw new Error(`No AI models are configured for '${task}'.`);
 

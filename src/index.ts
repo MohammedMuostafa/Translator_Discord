@@ -29,6 +29,7 @@ import {
   handleSmartReplyEditSubmit
 } from './aiActionHandlers.js';
 import { handleVoiceChatCommand } from './voiceHandlers.js';
+import { handleImageCommand, handleVideoCommand } from './mediaHandlers.js';
 import type { DiscordInteraction } from './types.js';
 import { registerGlobalCommands } from './registerCommands.js';
 import { aiConfigured } from './providers/translator.js';
@@ -50,7 +51,7 @@ registerAdminDashboard(app);
 const statusPayload = () => ({
   ok: true,
   service: 'td-ai',
-  version: '3.13.0',
+  version: '3.14.0',
   interactionEndpoint: '/interactions',
   adminDashboard: '/admin',
   translationProvider: env.TRANSLATION_PROVIDER,
@@ -73,6 +74,10 @@ const statusPayload = () => ({
   voiceReconnect: true,
   usageCredits: true,
   plans: true,
+  imageGeneration: true,
+  imageEditing: true,
+  videoGeneration: true,
+  planModelEntitlements: true,
   guildVoiceCommandEnabled: env.ENABLE_GUILD_VOICE_AI,
   listenTts: Boolean(
     (env.GEMINI_TTS_API_KEY ?? env.AI_API_KEY) &&
@@ -290,6 +295,24 @@ async function processInteraction(
     return;
   }
 
+  if (name === 'image') {
+    res.json({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
+    });
+    handleImageCommand(interaction);
+    return;
+  }
+
+  if (name === 'video') {
+    res.json({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
+    });
+    handleVideoCommand(interaction);
+    return;
+  }
+
   if (name === 'ai') {
     res.json({
       type: InteractionResponseType.DeferredChannelMessageWithSource,
@@ -344,7 +367,7 @@ app.post(
 );
 
 app.listen(env.PORT, env.HOST, () => {
-  console.log(`TD AI v3.13 listening on ${env.HOST}:${env.PORT}`);
+  console.log(`TD AI v3.14 listening on ${env.HOST}:${env.PORT}`);
   console.log('Interactions endpoint: /interactions');
   console.log('TD AI dashboard: /admin');
 

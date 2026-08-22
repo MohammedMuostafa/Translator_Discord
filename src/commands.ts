@@ -280,6 +280,144 @@ export const commands = [
       }
     ]
   },
+
+  {
+    ...common,
+    name: 'image',
+    description: 'Generate or edit images with TD AI',
+    type: 1,
+    options: [
+      {
+        name: 'generate',
+        description: 'Generate a new image from a prompt',
+        type: 1,
+        options: [
+          {
+            name: 'prompt',
+            description: 'Describe the image you want',
+            type: 3,
+            required: true,
+            max_length: 1800
+          },
+          {
+            name: 'quality',
+            description: 'Quality preset available on your plan',
+            type: 3,
+            required: false,
+            choices: [
+              { name: 'Draft — fastest', value: 'draft' },
+              { name: 'Standard', value: 'standard' },
+              { name: 'Premium', value: 'premium' }
+            ]
+          },
+          {
+            name: 'aspect',
+            description: 'Image aspect ratio',
+            type: 3,
+            required: false,
+            choices: [
+              { name: 'Square 1:1', value: '1:1' },
+              { name: 'Landscape 16:9', value: '16:9' },
+              { name: 'Portrait 9:16', value: '9:16' },
+              { name: 'Photo 3:2', value: '3:2' },
+              { name: 'Photo 2:3', value: '2:3' },
+              { name: 'Classic 4:3', value: '4:3' },
+              { name: 'Portrait 3:4', value: '3:4' }
+            ]
+          }
+        ]
+      },
+      {
+        name: 'edit',
+        description: 'Edit an existing image with a natural-language prompt',
+        type: 1,
+        options: [
+          {
+            name: 'image',
+            description: 'Image to edit',
+            type: 11,
+            required: true
+          },
+          {
+            name: 'prompt',
+            description: 'Describe the changes you want',
+            type: 3,
+            required: true,
+            max_length: 1800
+          },
+          {
+            name: 'quality',
+            description: 'Quality preset available on your plan',
+            type: 3,
+            required: false,
+            choices: [
+              { name: 'Draft — fastest', value: 'draft' },
+              { name: 'Standard', value: 'standard' },
+              { name: 'Premium', value: 'premium' }
+            ]
+          },
+          {
+            name: 'aspect',
+            description: 'Output image aspect ratio',
+            type: 3,
+            required: false,
+            choices: [
+              { name: 'Square 1:1', value: '1:1' },
+              { name: 'Landscape 16:9', value: '16:9' },
+              { name: 'Portrait 9:16', value: '9:16' },
+              { name: 'Photo 3:2', value: '3:2' },
+              { name: 'Photo 2:3', value: '2:3' },
+              { name: 'Classic 4:3', value: '4:3' },
+              { name: 'Portrait 3:4', value: '3:4' }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    ...common,
+    name: 'video',
+    description: 'Generate AI video with the quality available on your TD AI plan',
+    type: 1,
+    options: [
+      {
+        name: 'generate',
+        description: 'Generate a video from a text prompt',
+        type: 1,
+        options: [
+          {
+            name: 'prompt',
+            description: 'Describe the video, camera, motion, lighting and audio',
+            type: 3,
+            required: true,
+            max_length: 1800
+          },
+          {
+            name: 'quality',
+            description: 'Video quality preset available on your plan',
+            type: 3,
+            required: false,
+            choices: [
+              { name: 'Lite', value: 'lite' },
+              { name: 'Fast', value: 'fast' },
+              { name: 'Cinematic', value: 'cinematic' }
+            ]
+          },
+          {
+            name: 'aspect',
+            description: 'Video aspect ratio',
+            type: 3,
+            required: false,
+            choices: [
+              { name: 'Landscape 16:9', value: '16:9' },
+              { name: 'Vertical 9:16', value: '9:16' }
+            ]
+          }
+        ]
+      }
+    ]
+  },
   {
     ...common,
     name: 'chat',

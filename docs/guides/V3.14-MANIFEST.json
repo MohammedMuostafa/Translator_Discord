@@ -1,0 +1,56 @@
+{
+  "version": "3.14.0",
+  "repo": "MohammedMuostafa/Translator_Discord",
+  "files": [
+    {
+      "path": "docs/guides/V3.14-MEDIA-PLANS-DASHBOARD-AR.md",
+      "bytes": 5678,
+      "sha256": "2569782d3f976e9fd38e1e4d3b29cd0f53f88aa45e8ea053fe251c39eb4d6e96"
+    },
+    {
+      "path": "package.json",
+      "bytes": 749,
+      "sha256": "90b2d8a014a04d4f260bd8682b25960a6940be88ff2c7f7508dce975808a5a7d"
+    },
+    {
+      "path": "src/adminDashboard.ts",
+      "bytes": 74286,
+      "sha256": "2b53e28e90c6e7751b532f23b95fd5568454122c1e3bbd62061a0c4e38dc9c77"
+    },
+    {
+      "path": "src/commands.ts",
+      "bytes": 13119,
+      "sha256": "a18c38964936d73021be4e11bf087a7910cfb16c791596c7578e85f6c4945da5"
+    },
+    {
+      "path": "src/index.ts",
+      "bytes": 10885,
+      "sha256": "37691bb8584356d682d906f5470bb63fa19dc9d1f3b6f9498e798c4396492831"
+    },
+    {
+      "path": "src/mediaHandlers.ts",
+      "bytes": 6961,
+      "sha256": "b22d1b45c4ee895f4843b1d3e3551b827e3657f2552a1277c03ade774519126c"
+    },
+    {
+      "path": "src/services/billingStore.ts",
+      "bytes": 21400,
+      "sha256": "d36331c619b1d607b5de8760fdafc85f052d43a248a24d01af245bb311672782"
+    },
+    {
+      "path": "src/services/mediaGeneration.ts",
+      "bytes": 8735,
+      "sha256": "f82ff5a2e523a705e166f095a88c40799360d27eb42dacc42fe168d8d2b7182d"
+    },
+    {
+      "path": "src/services/modelCatalog.ts",
+      "bytes": 7826,
+      "sha256": "8cb76bfac49dd2974ee80f603b5616a1f42ede43f7c7bf4c549500b3fecfffcc"
+    },
+    {
+      "path": "src/services/modelRouter.ts",
+      "bytes": 9879,
+      "sha256": "1280f0cabdf30064fc1bde1dd37b72d1c4a0c2ddd8a6678616953eb1b737398f"
+    }
+  ]
+}
