@@ -53,6 +53,9 @@ interface VoiceAiSession {
   silenceMs: number;
   speakerAccess: VoiceSpeakerAccess;
   activeSpeakerId?: string;
+  lastSpeakerId?: string;
+  lastTextActionKey?: string;
+  lastTextActionAt?: number;
   participantIds: Set<string>;
 }
 
@@ -79,6 +82,109 @@ async function notifyUser(userId: string, text: string): Promise<void> {
   await user.send({ content: text.slice(0, 1900), allowedMentions: { parse: [] } }).catch(() => undefined);
 }
 
+type VoiceTextActionResult = {
+  handled: boolean;
+  posted: boolean;
+  content?: string;
+  error?: string;
+};
+
+function extractVoiceTextCommand(transcript: string): string | undefined {
+  const text = transcript.trim();
+  const patterns = [
+    // Arabic: اكتب في الشات صباح الخير / ابعت في الشات الاجتماع الساعة 8
+    /(?:اكتب(?:لي| ليا| لنا)?|ابعت|ابعث|ارسل|أرسل|رسل)\s+(?:في|على|بال|ب)\s*(?:الشات|التشات|chat)\s*[:：،,\-]?\s+([\s\S]+)/iu,
+    // Arabic reversed: في الشات اكتب صباح الخير
+    /(?:في|على|بال)\s*(?:الشات|التشات|chat)\s+(?:اكتب|ابعت|ابعث|ارسل|أرسل|رسل)\s*[:：،,\-]?\s+([\s\S]+)/iu,
+    // English: write in the chat hello / send to chat meeting at 8
+    /(?:write|send|post)\s+(?:this\s+)?(?:in|to)\s+(?:the\s+)?(?:voice\s+)?(?:text\s+)?chat\s*[:：,\-]?\s+([\s\S]+)/iu
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const payload = match?.[1]
+      ?.trim()
+      .replace(/^["“”'`]+|["“”'`]+$/g, '')
+      .trim();
+
+    if (payload) return payload.slice(0, 1800);
+  }
+
+  return undefined;
+}
+
+async function handleVoiceTextAction(
+  session: VoiceAiSession,
+  transcript: string,
+  speakerId: string
+): Promise<VoiceTextActionResult> {
+  const content = extractVoiceTextCommand(transcript);
+  if (!content) return { handled: false, posted: false };
+
+  // Gemini may emit the same final transcript more than once. Avoid duplicates.
+  const now = Date.now();
+  const actionKey = `${speakerId}:${content.toLocaleLowerCase()}`;
+  if (
+    session.lastTextActionKey === actionKey &&
+    session.lastTextActionAt &&
+    now - session.lastTextActionAt < 8_000
+  ) {
+    return { handled: true, posted: true, content };
+  }
+
+  try {
+    const client = getGatewayClient();
+    const channel = await client.channels.fetch(session.channelId);
+
+    if (!channel || !channel.isSendable()) {
+      throw new Error('This voice channel does not expose a text chat.');
+    }
+
+    await channel.send({
+      content,
+      // Voice commands must never be able to create @everyone / role pings.
+      allowedMentions: { parse: [] }
+    });
+
+    session.lastTextActionKey = actionKey;
+    session.lastTextActionAt = now;
+
+    console.log(`Voice text action: ${speakerId} -> ${content}`);
+    return { handled: true, posted: true, content };
+  } catch (error) {
+    const message = errorMessage(error);
+    console.error('Voice text action failed:', error);
+    return { handled: true, posted: false, content, error: message };
+  }
+}
+
+function voiceTextActionReply(transcript: string, posted: boolean): string {
+  if (/[پچژگک]/u.test(transcript)) {
+    return posted
+      ? 'انجام شد، توی چت نوشتم.'
+      : 'نتونستم پیام رو توی چت بفرستم.';
+  }
+
+  if (/\p{Script=Arabic}/u.test(transcript)) {
+    return posted
+      ? 'تمام، كتبتها في الشات.'
+      : 'ماقدرتش أكتب الرسالة في الشات.';
+  }
+
+  return posted
+    ? 'Done. I posted it in the chat.'
+    : 'I could not post that message in the chat.';
+}
+
+function mergeTranscript(current: string, incoming: string): string {
+  const clean = incoming.trim();
+  if (!clean) return current;
+  if (!current) return clean;
+  if (clean.startsWith(current)) return clean;
+  if (current.endsWith(clean)) return current;
+  return `${current} ${clean}`.trim();
+}
+
 function languageSystemInstruction(language: ChatResponseLanguage): string {
   const base = [
     'You are TD AI participating naturally in a GROUP Discord voice channel.',
@@ -89,6 +195,8 @@ function languageSystemInstruction(language: ChatResponseLanguage): string {
     'Reply quickly. Prefer one to three short sentences unless the current speaker asks for detail.',
     'Do not announce internal processing steps.',
     'If a human starts speaking while you are talking, stop and listen.',
+    'If a speaker explicitly asks you to write, send, or post a message in the Discord voice-channel text chat, the host runtime can perform that action.',
+    'When the speaker asks for a chat post, acknowledge briefly and do not say that you cannot access the chat.',
     'Never claim you performed an external action unless you actually did.'
   ];
   switch (language) {
@@ -157,7 +265,7 @@ function handleLiveMessage(session: VoiceAiSession, message: LiveServerMessage):
   if (!content) return;
   if (content.interrupted) { stopPlayback(session); session.busy = false; }
   const inputText = content.inputTranscription?.text?.trim();
-  if (inputText) session.inputTranscript = inputText;
+  if (inputText) session.inputTranscript = mergeTranscript(session.inputTranscript, inputText);
   const outputText = content.outputTranscription?.text?.trim();
   if (outputText) session.outputTranscript = outputText;
 
@@ -170,6 +278,20 @@ function handleLiveMessage(session: VoiceAiSession, message: LiveServerMessage):
   }
 
   if (content.turnComplete) {
+    const spokenText = session.inputTranscript.trim();
+    const speakerId = session.lastSpeakerId ?? session.userId;
+
+    if (spokenText) {
+      void handleVoiceTextAction(session, spokenText, speakerId).then((action) => {
+        if (action.handled && !action.posted) {
+          void notifyUser(
+            session.userId,
+            `❌ **Voice -> Chat:** ${action.error ?? 'Could not send the message.'}`
+          );
+        }
+      });
+    }
+
     finishLivePlayback(session);
     session.busy = false;
     session.turns += 1;
@@ -247,6 +369,7 @@ function attachLiveReceiver(session: VoiceAiSession): void {
     if (session.player.state.status !== AudioPlayerStatus.Idle) stopPlayback(session);
     session.capturing = true;
     session.activeSpeakerId = speakerId;
+    session.lastSpeakerId = speakerId;
     session.participantIds.add(speakerId);
     session.busy = false;
     session.inputTranscript = '';
@@ -312,7 +435,14 @@ async function processCascadeUtterance(session: VoiceAiSession, chunks: Buffer[]
   session.busy = true;
   try {
     const transcript = await transcribeAudioBytes(pcmToWav(pcm), 'td-ai-voice.wav', 'audio/wav');
-    const reply = await askAiChat(session.history, transcript.text, session.language, env.VOICE_AI_MODEL ?? env.AI_MODEL);
+    const textAction = await handleVoiceTextAction(
+      session,
+      transcript.text,
+      session.lastSpeakerId ?? session.userId
+    );
+    const reply = textAction.handled
+      ? voiceTextActionReply(transcript.text, textAction.posted)
+      : await askAiChat(session.history, transcript.text, session.language, env.VOICE_AI_MODEL ?? env.AI_MODEL);
     session.inputTranscript = transcript.text;
     session.outputTranscript = reply;
     session.history = trimHistory([...session.history, { role: 'user', content: transcript.text }, { role: 'assistant', content: reply }]);
@@ -335,6 +465,7 @@ function attachCascadeReceiver(session: VoiceAiSession): void {
     if (!current || current !== session || !canListenToSpeaker(session, speakerId) || session.busy || session.capturing) return;
     session.capturing = true;
     session.activeSpeakerId = speakerId;
+    session.lastSpeakerId = speakerId;
     session.participantIds.add(speakerId);
     const opusStream = receiver.subscribe(speakerId, { end: { behavior: EndBehaviorType.AfterSilence, duration: session.silenceMs } });
     const decoder = new OpusScript(48_000, 2, OpusScript.Application.AUDIO);

@@ -10,11 +10,34 @@ export type ModelMessage = {
   content: string;
 };
 
-const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
-const BACKOFF_MS = [650, 1400, 2800];
+const SAME_MODEL_RETRY_MS = 450;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseModelChain(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(/\s*(?:\||,|\n)\s*/)
+        .map((model) => normalizeModelId(model.trim()))
+        .filter(Boolean)
+    )
+  ];
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'status' in error
+  ) {
+    const status = Number((error as { status?: unknown }).status);
+    return Number.isFinite(status) ? status : undefined;
+  }
+
+  return undefined;
 }
 
 function supportsTemperature(model: string): boolean {
@@ -276,74 +299,111 @@ export async function callTextModel(
   transport: TextTransport;
 }> {
   const route = await getTextTaskRoute(task);
-  const model = normalizeModelId(
+  const models = parseModelChain(
     options.modelOverride?.trim() || route.model
   );
   const timeoutMs = options.timeoutMs ?? 60_000;
 
-  let lastError = 'AI request failed.';
+  if (!models.length) {
+    throw new Error(`No AI models are configured for '${task}'.`);
+  }
 
-  for (
-    let attempt = 0;
-    attempt <= BACKOFF_MS.length;
-    attempt += 1
-  ) {
-    try {
-      const text =
-        route.transport === 'gemini-native'
-          ? await requestGeminiNative(
-              route.apiKey,
-              model,
-              messages,
-              task,
-              options.temperature,
-              timeoutMs,
-              route.providerName
-            )
-          : await requestOpenAiCompatible(
-              route.apiUrl!,
-              route.apiKey,
-              model,
-              messages,
-              task,
-              options.temperature,
-              timeoutMs,
-              route.providerName
-            );
+  const errors: string[] = [];
 
-      return {
-        text,
-        model,
-        provider: route.providerName,
-        transport: route.transport
-      };
-    } catch (error) {
-      lastError =
-        error instanceof Error
-          ? error.message
-          : lastError;
+  for (const model of models) {
+    let transientRetries = 0;
 
-      const status =
-        typeof error === 'object' &&
-        error !== null &&
-        'status' in error
-          ? Number((error as { status?: unknown }).status)
-          : undefined;
+    while (true) {
+      try {
+        const text =
+          route.transport === 'gemini-native'
+            ? await requestGeminiNative(
+                route.apiKey,
+                model,
+                messages,
+                task,
+                options.temperature,
+                timeoutMs,
+                route.providerName
+              )
+            : await requestOpenAiCompatible(
+                route.apiUrl!,
+                route.apiKey,
+                model,
+                messages,
+                task,
+                options.temperature,
+                timeoutMs,
+                route.providerName
+              );
 
-      // 400/401/403/404 are configuration/input problems.
-      // Retrying them only creates delay and duplicate cost.
-      if (
-        status &&
-        !RETRYABLE_STATUS.has(status)
-      ) {
+        if (model !== models[0]) {
+          console.log(
+            `AI failover successful: ${task} -> ${route.providerName}/${model}`
+          );
+        }
+
+        return {
+          text,
+          model,
+          provider: route.providerName,
+          transport: route.transport
+        };
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Unknown AI error.';
+        const status = getErrorStatus(error);
+
+        errors.push(`${model}: ${message}`);
+
+        // Quota/rate-limit and provider overload should fail over immediately.
+        if (status === 429 || status === 503) {
+          console.warn(
+            `AI model unavailable (${status}): ${model}. Trying fallback model...`
+          );
+          break;
+        }
+
+        // Bad credentials, unsupported model IDs, or invalid input can still be
+        // model-specific, so allow the next explicitly configured fallback.
+        if (
+          status === 400 ||
+          status === 401 ||
+          status === 403 ||
+          status === 404
+        ) {
+          console.warn(
+            `AI model failed (${status}): ${model}. Trying fallback model...`
+          );
+          break;
+        }
+
+        // Short retry for transient server failures, then move on.
+        if (
+          status !== undefined &&
+          [500, 502, 504].includes(status) &&
+          transientRetries < 1
+        ) {
+          transientRetries += 1;
+          await sleep(SAME_MODEL_RETRY_MS);
+          continue;
+        }
+
+        // Timeout/network/unknown errors should not block the whole request.
+        console.warn(
+          `AI model failed: ${model}. Trying fallback model...`
+        );
         break;
-      }
-
-      if (attempt < BACKOFF_MS.length) {
-        await sleep(BACKOFF_MS[attempt] ?? 2800);
       }
     }
   }
 
-  throw new Error(lastError);
+  throw new Error(
+    [
+      'All configured AI models are currently unavailable.',
+      ...errors.slice(-3)
+    ].join(' | ')
+  );
 }
