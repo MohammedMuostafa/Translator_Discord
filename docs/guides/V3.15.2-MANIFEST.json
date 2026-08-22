@@ -1,0 +1,40 @@
+{
+  "version": "3.15.2",
+  "files": [
+    {
+      "path": "docs/guides/V3.15.2-NO-VOICE-TRANSLATE-AR.md",
+      "bytes": 1160,
+      "sha256": "68449146b6b67130f5ebac6bc87a498c0ebc69fde94f8b5c6ccd5a786fc83325"
+    },
+    {
+      "path": "package.json",
+      "bytes": 749,
+      "sha256": "f2613c2c827b1cfa8fc6cab77b26bed5adc49097e47abc072ba40e3a9e7caa3b"
+    },
+    {
+      "path": "src/adminDashboard.ts",
+      "bytes": 72599,
+      "sha256": "98588c56c4e54d5c1b5a4b4adaf62490a3ff2954ddc0617cafd971070e136124"
+    },
+    {
+      "path": "src/commands.ts",
+      "bytes": 11268,
+      "sha256": "c11c7ba6d8f9169487e808c686bfdfac2c271c1f313c259b7cd41f4abcc091e0"
+    },
+    {
+      "path": "src/index.ts",
+      "bytes": 10954,
+      "sha256": "eaaa678ca40a25113ada420ca6d6212013370acb554606acf950a533c1934352"
+    },
+    {
+      "path": "src/services/voiceAi.ts",
+      "bytes": 66131,
+      "sha256": "8ea499c77fa196c33315ccc67c4dedc6545912a56a2e397a66dcfd5953712dfa"
+    },
+    {
+      "path": "src/voiceHandlers.ts",
+      "bytes": 7275,
+      "sha256": "011daddea1f4f8172d5e91291af1787c85fd4179ca07e45df98d5d2988da3c04"
+    }
+  ]
+}

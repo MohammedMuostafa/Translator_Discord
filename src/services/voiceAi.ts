@@ -2257,37 +2257,13 @@ export async function joinVoiceAi(
 }
 
 export async function startVoiceTranslation(
-  guildId: string,
-  userId: string,
-  input?: Partial<VoiceTranslationOptions>
-): Promise<{ channelName: string; mode: VoiceEngine; translation: VoiceTranslationOptions }> {
-  await assertFeatureAccess(userId, 'live_translation');
-  await waitForGatewayReady();
-
-  const control = await getVoiceControlSettings();
-  const channel = await resolveVoiceChannel(guildId, userId);
-
-  const translation: VoiceTranslationOptions = {
-    languageA: input?.languageA?.trim() || control.translationLanguageA,
-    languageB: input?.languageB?.trim() || control.translationLanguageB,
-    quality: input?.quality ?? control.translationQuality,
-    output: input?.output ?? control.translationOutput
-  };
-
-  const session = await createSession(
-    guildId,
-    userId,
-    channel,
-    'auto',
-    'translation',
-    translation
+  _guildId: string,
+  _userId: string,
+  _input?: Partial<VoiceTranslationOptions>
+): Promise<never> {
+  throw new Error(
+    'Live Voice Translation has been removed. Use /voicechat join for normal TD AI voice.'
   );
-
-  return {
-    channelName: channel.name,
-    mode: session.engine,
-    translation
-  };
 }
 
 export async function stopVoiceTranslation(
@@ -2346,8 +2322,7 @@ export async function reconnectVoiceAi(
     requesterId,
     channel,
     session.language,
-    session.purpose,
-    session.translation
+    'conversation'
   );
 
   return {

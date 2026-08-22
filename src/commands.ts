@@ -87,15 +87,6 @@ const aiLanguageOption = {
   ]
 };
 
-const liveTranslationLanguageChoices = [
-  { name: 'English', value: 'en' },
-  { name: 'Egyptian Arabic', value: 'ar-eg' },
-  { name: 'Modern Standard Arabic', value: 'ar-msa' },
-  { name: 'Persian / Farsi', value: 'fa' },
-  { name: 'French', value: 'fr' },
-  { name: 'Spanish', value: 'es' },
-  { name: 'German', value: 'de' }
-];
 
 export const commands = [
   {
@@ -182,7 +173,7 @@ export const commands = [
   {
     ...guildOnly,
     name: 'voicechat',
-    description: 'Talk with TD AI, translate live, or control the current voice session',
+    description: 'Talk with TD AI or control the current voice session',
     type: 1,
     options: [
       {
@@ -190,54 +181,6 @@ export const commands = [
         description: 'Join your current voice channel in AI conversation mode',
         type: 1,
         options: [chatLanguageOption]
-      },
-      {
-        name: 'translate',
-        description: 'Start two-way live voice translation in your current voice channel',
-        type: 1,
-        options: [
-          {
-            name: 'language_a',
-            description: 'First conversation language',
-            type: 3,
-            required: true,
-            choices: liveTranslationLanguageChoices
-          },
-          {
-            name: 'language_b',
-            description: 'Second conversation language',
-            type: 3,
-            required: true,
-            choices: liveTranslationLanguageChoices
-          },
-          {
-            name: 'output',
-            description: 'How translated speech should be delivered',
-            type: 3,
-            required: false,
-            choices: [
-              { name: 'Voice + Captions', value: 'both' },
-              { name: 'Voice only', value: 'voice' },
-              { name: 'Captions only', value: 'captions' }
-            ]
-          },
-          {
-            name: 'quality',
-            description: 'Translation quality / latency profile',
-            type: 3,
-            required: false,
-            choices: [
-              { name: 'Fast', value: 'fast' },
-              { name: 'Balanced', value: 'balanced' },
-              { name: 'Accurate', value: 'accurate' }
-            ]
-          }
-        ]
-      },
-      {
-        name: 'translate-stop',
-        description: 'Stop live translation and return TD AI to conversation mode',
-        type: 1
       },
       {
         name: 'write',
