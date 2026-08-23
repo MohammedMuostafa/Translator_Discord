@@ -110,7 +110,7 @@ export const commands = [
   {
     ...common,
     name: 'settings',
-    description: 'View or update your translation and voice assistant preferences',
+    description: 'View or update your translation and preferences',
     type: 1,
     options: [
       {
@@ -139,24 +139,6 @@ export const commands = [
         type: 3,
         required: false,
         choices: styleChoices
-      },
-      {
-        name: 'wake_mode',
-        description: 'ON: sleep & require wake name. OFF: respond to all voice speech.',
-        type: 5,
-        required: false
-      },
-      {
-        name: 'wake_name',
-        description: 'Custom wake name for voice AI (default: TD)',
-        type: 3,
-        required: false
-      },
-      {
-        name: 'followup_seconds',
-        description: 'Follow-up listening window in seconds after TD speaks (1 to 30s)',
-        type: 4,
-        required: false
       }
     ]
   }

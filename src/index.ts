@@ -5,7 +5,9 @@ import {
   ApplicationCommandType,
   InteractionResponseType,
   InteractionType,
-  MessageFlags
+  MessageFlags,
+  clipDiscord,
+  editOriginalResponse
 } from './discord.js';
 import {
   handleListenTts,
@@ -213,37 +215,22 @@ async function processInteraction(
   const name = interaction.data.name;
 
   if (commandType === ApplicationCommandType.Message) {
-    try {
-      if (name === 'Translate') {
-        const payload = await handleTranslateMessagePicker(interaction);
-        return res.json({
-          type: InteractionResponseType.ChannelMessageWithSource,
-          data: {
-            ...payload,
-            flags: MessageFlags.Ephemeral
-          }
-        });
-      }
+    res.json({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
+    });
 
-      if (name === 'TD AI') {
-        const payload = await handleAiMessagePicker(interaction);
-        return res.json({
-          type: InteractionResponseType.ChannelMessageWithSource,
-          data: {
-            ...payload,
-            flags: MessageFlags.Ephemeral
-          }
-        });
-      }
-    } catch (error) {
-      return res.json(
-        ephemeralError(
-          error instanceof Error ? error.message : 'Unexpected error.'
-        )
-      );
+    if (name === 'Translate') {
+      handleTranslateMessagePicker(interaction);
+      return;
     }
 
-    return res.json(ephemeralError('Unknown message action.'));
+    if (name === 'TD AI') {
+      handleAiMessagePicker(interaction);
+      return;
+    }
+
+    return;
   }
 
   if (commandType !== ApplicationCommandType.ChatInput) {
@@ -296,22 +283,22 @@ async function processInteraction(
   }
 
   if (name === 'settings') {
-    try {
-      const payload = await handleSettings(interaction);
-      return res.json({
-        type: InteractionResponseType.ChannelMessageWithSource,
-        data: {
-          ...payload,
-          flags: MessageFlags.Ephemeral
-        }
-      });
-    } catch (error) {
-      return res.json(
-        ephemeralError(
-          error instanceof Error ? error.message : 'Unexpected error.'
-        )
-      );
-    }
+    res.json({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
+    });
+    void (async () => {
+      try {
+        const payload = await handleSettings(interaction);
+        await editOriginalResponse(interaction.application_id, interaction.token, payload);
+      } catch (error) {
+        await editOriginalResponse(interaction.application_id, interaction.token, {
+          content: clipDiscord(`❌ ${error instanceof Error ? error.message : 'Unexpected error.'}`),
+          allowed_mentions: { parse: [] }
+        }).catch(console.error);
+      }
+    })();
+    return;
   }
 
   return res.json(ephemeralError(`Unknown command /${name}.`));

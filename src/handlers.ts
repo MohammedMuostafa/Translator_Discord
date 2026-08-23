@@ -241,60 +241,64 @@ async function messageText(message: DiscordMessage): Promise<{ text: string; spo
   return { text: transcript.text, spokenLanguage: transcript.language };
 }
 
-export async function handleTranslateMessagePicker(interaction: DiscordInteraction): Promise<Record<string, unknown>> {
-  const userId = userIdOf(interaction);
-  const prefs = await getPreference(userId);
-  const message = targetMessage(interaction);
-  if (!message) throw new Error('Discord did not provide the selected message.');
-  if (!message.content?.trim() && !audioFromMessage(message)) {
-    throw new Error('This message has no text or supported voice/audio attachment.');
-  }
+export function handleTranslateMessagePicker(interaction: DiscordInteraction): void {
+  void runAndEdit(interaction, async () => {
+    const userId = userIdOf(interaction);
+    const prefs = await getPreference(userId);
+    const message = targetMessage(interaction);
+    if (!message) throw new Error('Discord did not provide the selected message.');
+    if (!message.content?.trim() && !audioFromMessage(message)) {
+      throw new Error('This message has no text or supported voice/audio attachment.');
+    }
 
-  // If quick_translate is ON, translate directly to translate_target without showing menu
-  if (prefs.quick_translate) {
-    const display = await getDisplayRuntimeSettings();
-    const target = resolveTarget(undefined, prefs.translate_target || prefs.incoming, prefs.incoming);
-    const source = await messageText(message);
-    const translated = await translateText(source.text, target, {
-      source: source.spokenLanguage ?? 'auto',
-      provider: prefs.provider,
-      style: prefs.style
-    });
+    const autoTranslate = prefs.autoTranslateToMyLanguage ?? prefs.quick_translate;
 
+    // If auto_translate is ON, translate directly to myLanguage without showing menu
+    if (autoTranslate) {
+      const display = await getDisplayRuntimeSettings();
+      const target = resolveTarget(undefined, prefs.myLanguage || prefs.translate_target || prefs.incoming, prefs.incoming);
+      const source = await messageText(message);
+      const translated = await translateText(source.text, target, {
+        source: source.spokenLanguage ?? 'auto',
+        provider: prefs.provider,
+        style: prefs.style
+      });
+
+      return {
+        content: formatTranslation(
+          source.text,
+          translated.text,
+          target,
+          display,
+          translated.detectedSourceLanguage ?? source.spokenLanguage,
+          translated.provider
+        ),
+        components: buildListenComponents(userId, translated.text, target),
+        allowed_mentions: { parse: [] }
+      };
+    }
+
+    const sessionId = createTranslationSession(userId, message);
     return {
-      content: formatTranslation(
-        source.text,
-        translated.text,
-        target,
-        display,
-        translated.detectedSourceLanguage ?? source.spokenLanguage,
-        translated.provider
-      ),
-      components: buildListenComponents(userId, translated.text, target),
+      content: [
+        '🌐 **Translate this message**',
+        'AI will detect the source automatically — including **Egyptian Arabic vs Modern Standard Arabic**.',
+        'Choose the language you want:'
+      ].join('\n'),
+      components: [{
+        type: 1,
+        components: [{
+          type: 3,
+          custom_id: `translate_target:${sessionId}`,
+          placeholder: `Translate to… (Default: ${languageLabel(prefs.myLanguage || prefs.translate_target || prefs.incoming)})`.slice(0, 150),
+          min_values: 1,
+          max_values: 1,
+          options: targetSelectOptions(prefs.myLanguage || prefs.translate_target || prefs.incoming)
+        }]
+      }],
       allowed_mentions: { parse: [] }
     };
-  }
-
-  const sessionId = createTranslationSession(userId, message);
-  return {
-    content: [
-      '🌐 **Translate this message**',
-      'AI will detect the source automatically — including **Egyptian Arabic vs Modern Standard Arabic**.',
-      'Choose the language you want:'
-    ].join('\n'),
-    components: [{
-      type: 1,
-      components: [{
-        type: 3,
-        custom_id: `translate_target:${sessionId}`,
-        placeholder: `Translate to… (Default: ${languageLabel(prefs.translate_target || prefs.incoming)})`.slice(0, 150),
-        min_values: 1,
-        max_values: 1,
-        options: targetSelectOptions(prefs.translate_target || prefs.incoming)
-      }]
-    }],
-    allowed_mentions: { parse: [] }
-  };
+  });
 }
 
 export function handleTranslateMessageSelection(interaction: DiscordInteraction): void {
@@ -314,7 +318,7 @@ export function handleTranslateMessageSelection(interaction: DiscordInteraction)
     const prefs = await getPreference(userId);
     const display = await getDisplayRuntimeSettings();
     const selected = interaction.data?.values?.[0];
-    const target = resolveTarget(selected, prefs.translate_target || prefs.incoming, prefs.incoming);
+    const target = resolveTarget(selected, prefs.myLanguage || prefs.translate_target || prefs.incoming, prefs.incoming);
 
     let rawText = '';
     let spokenLanguage: string | undefined = undefined;
@@ -359,8 +363,9 @@ export function handleTranslateText(interaction: DiscordInteraction): void {
     if (!text) throw new Error('Text is required.');
 
     const explicitTarget = option<string>(interaction, 'target');
+    const autoTranslate = prefs.autoTranslateToMyLanguage ?? prefs.quick_translate;
 
-    if (!explicitTarget && !prefs.quick_translate) {
+    if (!explicitTarget && !autoTranslate) {
       const sessionId = createTranslationTextSession(userId, text);
       return {
         content: [
@@ -372,17 +377,17 @@ export function handleTranslateText(interaction: DiscordInteraction): void {
           components: [{
             type: 3,
             custom_id: `translate_text_target:${sessionId}`,
-            placeholder: `Translate to… (Default: ${languageLabel(prefs.translate_target || prefs.incoming)})`.slice(0, 150),
+            placeholder: `Translate to… (Default: ${languageLabel(prefs.myLanguage || prefs.translate_target || prefs.incoming)})`.slice(0, 150),
             min_values: 1,
             max_values: 1,
-            options: targetSelectOptions(prefs.translate_target || prefs.incoming)
+            options: targetSelectOptions(prefs.myLanguage || prefs.translate_target || prefs.incoming)
           }]
         }],
         allowed_mentions: { parse: [] }
       };
     }
 
-    const target = resolveTarget(explicitTarget, prefs.translate_target || prefs.incoming, prefs.incoming);
+    const target = resolveTarget(explicitTarget, prefs.myLanguage || prefs.translate_target || prefs.incoming, prefs.incoming);
     const options = requestOptions(interaction, prefs);
     const translated = await translateText(text, target, options);
     return {

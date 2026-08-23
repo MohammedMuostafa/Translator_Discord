@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 import {
   AudioPlayerStatus,
@@ -202,12 +203,27 @@ async function resolveViaYtDlp(query: string, requestedBy: string): Promise<Musi
 }
 
 async function resolveTrack(query: string, requestedBy: string): Promise<MusicTrack> {
-  // Try Lavalink first if available
-  const lavalinkTrack = await resolveViaLavalink(query, requestedBy);
+  const clean = query.trim();
+  if (!clean) throw new Error('Song name or link is required.');
+
+  // 1. Direct playable media URL check
+  if (looksLikeUrl(clean) && /\.(mp3|aac|ogg|wav|flac|m4a|weba|opus)(?:\?.*)?$/i.test(clean)) {
+    const filename = clean.split('/').pop()?.split('?')[0] || 'Audio Stream';
+    return {
+      id: `${Date.now()}`,
+      title: decodeURIComponent(filename),
+      url: clean,
+      requestedBy,
+      sourceType: 'direct'
+    };
+  }
+
+  // 2. Try Lavalink if configured
+  const lavalinkTrack = await resolveViaLavalink(clean, requestedBy);
   if (lavalinkTrack) return lavalinkTrack;
 
-  // Fallback to yt-dlp
-  return resolveViaYtDlp(query, requestedBy);
+  // 3. Fallback to yt-dlp search/extract
+  return resolveViaYtDlp(clean, requestedBy);
 }
 
 function stopProcesses(state: GuildMusicState): void {
@@ -224,19 +240,19 @@ function ensureState(
   hooks: MusicHooks = {}
 ): GuildMusicState {
   const existing = states.get(guildId);
-  const vol = guildVolumes.get(guildId) ?? 100;
   if (existing) {
     existing.player = player;
     existing.hooks = hooks;
     return existing;
   }
 
+  const volume = guildVolumes.get(guildId) ?? 100;
   const state: GuildMusicState = {
     player,
     queue: [],
     paused: false,
     resolving: false,
-    volume: vol,
+    volume,
     hooks
   };
   states.set(guildId, state);
@@ -250,53 +266,10 @@ async function startTrack(guildId: string, state: GuildMusicState, track: MusicT
   state.hooks.onActiveChange?.(true);
   state.hooks.onTrackStart?.(track);
 
-  const ytdlp = spawn(
-    'yt-dlp',
-    [
-      '--no-warnings',
-      '--no-playlist',
-      '-f',
-      'bestaudio/best',
-      '-o',
-      '-',
-      track.url
-    ],
-    { stdio: ['pipe', 'pipe', 'pipe'] }
-  );
-
-  const ffmpeg = spawn(
-    'ffmpeg',
-    [
-      '-hide_banner',
-      '-loglevel',
-      'error',
-      '-i',
-      'pipe:0',
-      '-vn',
-      '-ac',
-      '2',
-      '-ar',
-      '48000',
-      '-f',
-      's16le',
-      'pipe:1'
-    ],
-    { stdio: ['pipe', 'pipe', 'pipe'] }
-  );
-
-  state.ytdlp = ytdlp;
-  state.ffmpeg = ffmpeg;
-
-  ytdlp.stdin.end();
-  ytdlp.stdout.pipe(ffmpeg.stdin);
-  ffmpeg.stdin.on('error', () => undefined);
-
   let stderr = '';
   const rememberError = (chunk: Buffer) => {
     if (stderr.length < 2400) stderr += chunk.toString('utf8');
   };
-  ytdlp.stderr.on('data', rememberError);
-  ffmpeg.stderr.on('data', rememberError);
 
   let childFailed = false;
   const childError = (error: Error) => {
@@ -306,20 +279,95 @@ async function startTrack(guildId: string, state: GuildMusicState, track: MusicT
     try { state.player.stop(true); } catch { /* no-op */ }
   };
 
-  ytdlp.once('error', childError);
-  ffmpeg.once('error', childError);
+  let audioSourceStream: Readable;
 
-  ytdlp.once('close', (code) => {
-    if (code && code !== 0 && !childFailed) {
-      childFailed = true;
-      state.hooks.onError?.(
-        friendlyMusicError(new Error(stderr.trim() || `yt-dlp exited with code ${code}.`))
-      );
-      try { state.player.stop(true); } catch { /* no-op */ }
-    }
-  });
+  if (track.sourceType === 'direct' || (looksLikeUrl(track.url) && /\.(mp3|aac|ogg|wav|flac|m4a|weba|opus)(?:\?.*)?$/i.test(track.url))) {
+    const ffmpeg = spawn(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-i',
+        track.url,
+        '-vn',
+        '-ac',
+        '2',
+        '-ar',
+        '48000',
+        '-f',
+        's16le',
+        'pipe:1'
+      ],
+      { stdio: ['pipe', 'pipe', 'pipe'] }
+    );
 
-  const resource = createAudioResource(ffmpeg.stdout, {
+    state.ffmpeg = ffmpeg;
+    ffmpeg.stderr.on('data', rememberError);
+    ffmpeg.once('error', childError);
+    audioSourceStream = ffmpeg.stdout;
+  } else {
+    const ytdlp = spawn(
+      'yt-dlp',
+      [
+        '--no-warnings',
+        '--no-playlist',
+        '-f',
+        'bestaudio/best',
+        '-o',
+        '-',
+        track.url
+      ],
+      { stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+
+    const ffmpeg = spawn(
+      'ffmpeg',
+      [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-i',
+        'pipe:0',
+        '-vn',
+        '-ac',
+        '2',
+        '-ar',
+        '48000',
+        '-f',
+        's16le',
+        'pipe:1'
+      ],
+      { stdio: ['pipe', 'pipe', 'pipe'] }
+    );
+
+    state.ytdlp = ytdlp;
+    state.ffmpeg = ffmpeg;
+
+    ytdlp.stdin.end();
+    ytdlp.stdout.pipe(ffmpeg.stdin);
+    ffmpeg.stdin.on('error', () => undefined);
+
+    ytdlp.stderr.on('data', rememberError);
+    ffmpeg.stderr.on('data', rememberError);
+
+    ytdlp.once('error', childError);
+    ffmpeg.once('error', childError);
+
+    ytdlp.once('close', (code) => {
+      if (code && code !== 0 && !childFailed) {
+        childFailed = true;
+        state.hooks.onError?.(
+          friendlyMusicError(new Error(stderr.trim() || `yt-dlp exited with code ${code}.`))
+        );
+        try { state.player.stop(true); } catch { /* no-op */ }
+      }
+    });
+
+    audioSourceStream = ffmpeg.stdout;
+  }
+
+  const resource = createAudioResource(audioSourceStream, {
     inputType: StreamType.Raw,
     inlineVolume: true,
     metadata: {
@@ -331,7 +379,7 @@ async function startTrack(guildId: string, state: GuildMusicState, track: MusicT
 
   const currentVol = state.volume ?? getGuildMusicVolume(guildId);
   if (resource.volume) {
-    resource.volume.setVolume(currentVol / 100);
+    resource.volume.setVolume(Math.max(0, Math.min(2, currentVol / 100)));
   }
 
   state.resource = resource;

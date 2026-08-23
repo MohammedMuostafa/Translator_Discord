@@ -1278,376 +1278,7 @@ async function sendLiveText(
   });
 }
 
-async function processWakeGatedLiveUtterance(
-  session: VoiceAiSession,
-  speakerId: string,
-  chunks: Buffer[],
-  followupAuthorizedAtStart = false
-): Promise<void> {
-  if (!chunks.length) return;
 
-  const pcm = Buffer.concat(chunks);
-  if (pcm.byteLength < 24_000) return;
-
-  session.busy = true;
-  let handedToLive = false;
-
-  try {
-    const control = await getVoiceControlSettings();
-
-    // A follow-up is authorized when the speaker STARTS talking inside
-    // the follow-up window. The sentence may finish after the timer expires.
-    // Do not run it through wake STT again; forward the natural audio
-    // directly to Gemini Live.
-    if (followupAuthorizedAtStart) {
-      session.awakeSpeakerId =
-        speakerId;
-
-      handedToLive =
-        true;
-
-      await sleep(
-        session.responseDelayMs
-      );
-
-      await sendRawPcmToLive(
-        session,
-        speakerId,
-        pcm
-      );
-
-      return;
-    }
-
-    // Sleeping state: only STT wake detection may open the session.
-    // Ordinary background speech is never forwarded to Gemini Live.
-    const transcript =
-      await transcribeWakePcm(
-        pcm
-      );
-
-    const spoken = transcript.text.trim();
-    if (!spoken) return;
-
-    let commandText = spoken;
-    const now = Date.now();
-    const personal = await getUserPersonalization(session.userId).catch(() => undefined);
-    const wakeWords = [...(control.wakeWords || []), personal?.wakeName || 'TD'];
-    const wake = wakeFromTranscript(spoken, wakeWords);
-    const followupMs = personal?.followupWindowMs || control.followupWindowMs || 5000;
-
-    if (wake.woke) {
-      session.awakeSpeakerId = speakerId;
-      session.awakeUntil = now + followupMs;
-      commandText = wake.remainder;
-
-      if (!commandText) {
-        handedToLive = true;
-        await sendLiveText(
-          session,
-          speakerId,
-          [
-            '[TD_WAKE]',
-            'A speaker just called your wake name.',
-            'Reply with ONLY a very short acknowledgement in the same language as the speaker.',
-            'Examples: "أيوه؟" or "Yes?"'
-          ].join('\n')
-        );
-        return;
-      }
-    } else {
-      const stillAwake =
-        session.awakeUntil > now &&
-        (
-          control.followupSpeaker === 'anyone' ||
-          session.awakeSpeakerId === speakerId
-        );
-
-      if (!stillAwake) {
-        session.inputTranscript = spoken;
-        session.outputTranscript = '';
-        return;
-      }
-    }
-
-    // Only accepted TD turns count toward the user's STT usage.
-    await recordUsage(
-      speakerId,
-      'stt',
-      Math.max(
-        1,
-        Math.ceil(pcm.byteLength / 48_000) * 4
-      )
-    ).catch(() => undefined);
-
-    if (isSkipCommand(commandText)) {
-      stopPlayback(session);
-      session.outputTranscript = '';
-      return;
-    }
-
-    const writeText = extractWriteCommand(commandText);
-    if (writeText) {
-      const actionKey = `${speakerId}:${writeText.toLocaleLowerCase()}`;
-      const actionNow = Date.now();
-
-      if (
-        !(
-          session.lastTextActionKey === actionKey &&
-          session.lastTextActionAt &&
-          actionNow - session.lastTextActionAt < 8_000
-        )
-      ) {
-        await postToVoiceTextChannel(session, writeText);
-        session.lastTextActionKey = actionKey;
-        session.lastTextActionAt = actionNow;
-      }
-
-      handedToLive = true;
-      await sendLiveText(
-        session,
-        speakerId,
-        /\p{Script=Arabic}/u.test(commandText)
-          ? '[TD_HOST]\nتم تنفيذ أمر الكتابة بنجاح. قل فقط: تمام، كتبتها في الشات.'
-          : '[TD_HOST]\nThe write action succeeded. Say only: Done, I posted it in the chat.'
-      );
-      return;
-    }
-
-    if (isUsageCommand(commandText)) {
-      const summary = await userUsageSummary(speakerId);
-      const usage = shortUsageReply(summary, commandText);
-
-      handedToLive = true;
-      await sendLiveText(
-        session,
-        speakerId,
-        `[TD_HOST]\nRead this usage result naturally and briefly in the same language:\n${usage}`
-      );
-      return;
-    }
-
-    if (isReconnectCommand(commandText)) {
-      session.busy = false;
-      setTimeout(() => {
-        void reconnectVoiceAi(
-          session.guildId,
-          session.userId
-        ).catch((error) => {
-          console.error(
-            'Voice reconnect command failed:',
-            error
-          );
-        });
-      }, 100);
-      return;
-    }
-
-    await assertFeatureAccess(
-      speakerId,
-      'voice_ai'
-    );
-
-    handedToLive = true;
-    await sendLiveText(
-      session,
-      speakerId,
-      `[TD_ACCEPTED]\n${commandText}`
-    );
-  } catch (error) {
-    // Sleeping background speech or an unrecognized wake phrase should not
-    // create a noisy Discord error. Keep listening for the next utterance.
-    console.warn(
-      'Wake phrase was not recognized after retry:',
-      error
-    );
-  } finally {
-    if (!handedToLive) {
-      session.busy = false;
-    }
-  }
-}
-
-function attachWakeGatedLiveReceiver(
-  session: VoiceAiSession
-): void {
-  const receiver = session.connection.receiver;
-
-  receiver.speaking.on(
-    'start',
-    (speakerId) => {
-      const current =
-        sessions.get(session.guildId);
-
-      if (
-        !current ||
-        current !== session ||
-        session.engine !== 'live' ||
-        !session.live ||
-        !canListenToSpeaker(
-          session,
-          speakerId
-        ) ||
-        session.capturing
-      ) {
-        return;
-      }
-
-      const startedWhileReplyPlaying =
-        session.player.state.status !==
-        AudioPlayerStatus.Idle;
-
-      const followupAuthorizedAtStart =
-        followupAuthorizedNow(
-          session,
-          speakerId
-        ) ||
-        (
-          startedWhileReplyPlaying &&
-          Boolean(
-            session.awakeSpeakerId
-          ) &&
-          (
-            session.followupSpeaker === 'anyone' ||
-            session.awakeSpeakerId === speakerId
-          )
-        );
-
-      if (
-        startedWhileReplyPlaying
-      ) {
-        stopPlayback(
-          session
-        );
-
-        session.busy =
-          false;
-      }
-
-      if (session.busy) return;
-
-      // Once a follow-up starts inside the valid window, keep it authorized
-      // until this utterance finishes.
-      if (
-        followupAuthorizedAtStart
-      ) {
-        session.awakeSpeakerId =
-          speakerId;
-
-        session.awakeUntil =
-          Date.now() +
-          Math.max(
-            10_000,
-            env.VOICE_AI_MAX_UTTERANCE_SECONDS *
-              1000
-          );
-      }
-
-      session.capturing = true;
-      session.activeSpeakerId = speakerId;
-      session.lastSpeakerId = speakerId;
-      session.participantIds.add(speakerId);
-
-      const opusStream =
-        receiver.subscribe(
-          speakerId,
-          {
-            end: {
-              behavior:
-                EndBehaviorType.AfterSilence,
-              duration:
-                Math.max(
-                  session.silenceMs,
-                  650
-                )
-            }
-          }
-        );
-
-      const decoder =
-        new OpusScript(
-          48_000,
-          2,
-          OpusScript.Application.AUDIO
-        );
-
-      const chunks: Buffer[] = [];
-      let finalized = false;
-
-      const timer =
-        setTimeout(
-          () => opusStream.destroy(),
-          env.VOICE_AI_MAX_UTTERANCE_SECONDS *
-            1000
-        );
-
-      const finalize = () => {
-        if (finalized) return;
-        finalized = true;
-
-        clearTimeout(timer);
-        session.capturing = false;
-        session.activeSpeakerId =
-          undefined;
-
-        try {
-          decoder.delete();
-        } catch {
-          // no-op
-        }
-
-        void processWakeGatedLiveUtterance(
-          session,
-          speakerId,
-          chunks,
-          followupAuthorizedAtStart
-        );
-      };
-
-      opusStream.on(
-        'data',
-        (packet: Buffer) => {
-          try {
-            const decoded =
-              decoder.decode(packet);
-
-            if (decoded?.byteLength) {
-              chunks.push(
-                Buffer.from(decoded)
-              );
-            }
-          } catch (error) {
-            console.error(
-              'Wake-gated Opus decode error:',
-              error
-            );
-          }
-        }
-      );
-
-      opusStream.once(
-        'end',
-        finalize
-      );
-
-      opusStream.once(
-        'close',
-        finalize
-      );
-
-      opusStream.once(
-        'error',
-        (error) => {
-          console.error(
-            'Wake-gated receive stream error:',
-            error.message
-          );
-          finalize();
-        }
-      );
-    }
-  );
-}
 
 type LiveFunctionCall = {
   id?: string;
@@ -2702,7 +2333,7 @@ async function switchConversationToCascade(
 ): Promise<void> {
   if (session.engine === 'cascade') return;
 
-  console.warn(`Switching conversation to cascade fallback in guild ${session.guildId}: ${reason}`);
+  console.warn(`[Voice AI] Switching conversation to cascade fallback in guild ${session.guildId}: ${reason}`);
   session.engine = 'cascade';
   session.liveReconnecting = false;
   session.busy = false;
@@ -2710,6 +2341,22 @@ async function switchConversationToCascade(
 
   try { session.live?.close(); } catch { /* no-op */ }
   session.live = undefined;
+
+  const hasStt = sttConfigured();
+  const hasAi = aiChatConfigured();
+  const hasTts = geminiTtsConfigured();
+
+  if (!hasStt || !hasAi || !hasTts) {
+    const missing = [
+      !hasStt ? 'STT' : '',
+      !hasAi ? 'AI Chat' : '',
+      !hasTts ? 'Gemini TTS' : ''
+    ].filter(Boolean).join(', ');
+    const msg = `Live Voice is temporarily unavailable (${reason}) and Cascade fallback is missing: ${missing}.`;
+    console.error(`[Voice AI] ${msg}`);
+    void notifyUser(session.userId, `❌ **TD AI Voice:** ${msg}`);
+    return;
+  }
 
   attachCascadeReceiver(session);
 
@@ -2719,16 +2366,14 @@ async function switchConversationToCascade(
     : 'Live Voice is temporarily unavailable. TD switched to Standard Voice automatically.';
 
   try {
-    if (geminiTtsConfigured()) {
-      await playGeneratedSpeech(
-        session,
-        notice,
-        inferSpeechLanguage(notice, session.language),
-        session.userId
-      );
-    }
+    await playGeneratedSpeech(
+      session,
+      notice,
+      inferSpeechLanguage(notice, session.language),
+      session.userId
+    );
   } catch {
-    // If TTS fails during switch notice, notify via DM or text
+    // If TTS fails during switch notice, notify via DM
   }
 
   void notifyUser(
@@ -3136,7 +2781,7 @@ async function createSession(
   try {
     if (engine === 'live') {
       await connectGeminiLive(session);
-      attachWakeGatedLiveReceiver(session);
+      attachLiveReceiver(session);
     } else if (engine === 'translate-live') {
       try {
         await connectGeminiLiveTranslation(session);
