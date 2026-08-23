@@ -268,9 +268,53 @@ async function processInteraction(
     return;
   }
 
-  return res.json(ephemeralError(`The /${name} command is no longer active. Use /join or /leave, or talk naturally to TD AI in DMs or Voice.`));
+  if (name === 'music') {
+    res.json({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
+    });
+    handleMusicCommand(interaction);
+    return;
+  }
 
-  return res.json(ephemeralError('Unknown command.'));
+  if (name === 'translate') {
+    res.json({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
+    });
+    handleTranslateText(interaction);
+    return;
+  }
+
+  if (name === 'say') {
+    res.json({
+      type: InteractionResponseType.DeferredChannelMessageWithSource,
+      data: { flags: MessageFlags.Ephemeral }
+    });
+    handleSay(interaction);
+    return;
+  }
+
+  if (name === 'settings') {
+    try {
+      const payload = await handleSettings(interaction);
+      return res.json({
+        type: InteractionResponseType.ChannelMessageWithSource,
+        data: {
+          ...payload,
+          flags: MessageFlags.Ephemeral
+        }
+      });
+    } catch (error) {
+      return res.json(
+        ephemeralError(
+          error instanceof Error ? error.message : 'Unexpected error.'
+        )
+      );
+    }
+  }
+
+  return res.json(ephemeralError(`Unknown command /${name}.`));
 }
 
 app.post(

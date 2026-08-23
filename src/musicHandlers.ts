@@ -38,6 +38,18 @@ function optionNumber(interaction: DiscordInteraction, name: string): number | u
   return typeof option?.value === 'number' ? option.value : undefined;
 }
 
+function topOptionString(interaction: DiscordInteraction, name: string): string | undefined {
+  const direct = interaction.data?.options?.find((item: any) => item.name === name);
+  if (typeof direct?.value === 'string') return direct.value;
+  return optionString(interaction, name);
+}
+
+function topOptionNumber(interaction: DiscordInteraction, name: string): number | undefined {
+  const direct = interaction.data?.options?.find((item: any) => item.name === name);
+  if (typeof direct?.value === 'number') return direct.value;
+  return optionNumber(interaction, name);
+}
+
 function durationLabel(seconds?: number): string {
   if (!seconds || !Number.isFinite(seconds)) return '';
   const total = Math.max(0, Math.round(seconds));
@@ -144,6 +156,23 @@ export function handleMusicCommand(interaction: DiscordInteraction): void {
     try {
       const guildId = guildIdOf(interaction);
       const userId = userIdOf(interaction);
+      const query = topOptionString(interaction, 'query')?.trim();
+
+      if (query) {
+        await playVoiceMusic(guildId, userId, query);
+        const player = musicPlayerMessage(guildId);
+        await editOriginalResponse(
+          interaction.application_id,
+          interaction.token,
+          {
+            content: player.content,
+            components: player.components,
+            allowed_mentions: { parse: [] }
+          }
+        );
+        return;
+      }
+
       const action = subcommand(interaction)?.name ?? 'now';
 
       if (action === 'play') {

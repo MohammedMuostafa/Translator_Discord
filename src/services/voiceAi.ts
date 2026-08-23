@@ -813,6 +813,7 @@ function wakeFromTranscript(
     'تي دي',
     'تيدي',
     'يا تي دي',
+    'يا تيدي',
     'تي دي اي',
     'translator'
   ];
@@ -825,9 +826,15 @@ function wakeFromTranscript(
       return { woke: true, remainder: '' };
     }
 
-    if (normalized.startsWith(`${cleanWake} `)) {
+    if (
+      normalized.startsWith(`${cleanWake} `) ||
+      normalized.startsWith(`${cleanWake}،`) ||
+      normalized.startsWith(`${cleanWake},`) ||
+      normalized.startsWith(`${cleanWake}:`) ||
+      normalized.startsWith(`${cleanWake}：`)
+    ) {
       const wakeParts = cleanWake.split(' ').length;
-      const originalParts = raw.split(/\s+/);
+      const originalParts = raw.split(/[\s,،:：]+/);
       return {
         woke: true,
         remainder: originalParts.slice(wakeParts).join(' ').trim()
@@ -1134,6 +1141,7 @@ function attachCascadeReceiver(session: VoiceAiSession): void {
     if (
       !current ||
       current !== session ||
+      session.engine !== 'cascade' ||
       !canListenToSpeaker(session, speakerId) ||
       session.capturing
     ) {
@@ -1323,11 +1331,14 @@ async function processWakeGatedLiveUtterance(
 
     let commandText = spoken;
     const now = Date.now();
-    const wake = wakeFromTranscript(spoken, control.wakeWords);
+    const personal = await getUserPersonalization(session.userId).catch(() => undefined);
+    const wakeWords = [...(control.wakeWords || []), personal?.wakeName || 'TD'];
+    const wake = wakeFromTranscript(spoken, wakeWords);
+    const followupMs = personal?.followupWindowMs || control.followupWindowMs || 5000;
 
     if (wake.woke) {
       session.awakeSpeakerId = speakerId;
-      session.awakeUntil = now + control.wakeWindowMs;
+      session.awakeUntil = now + followupMs;
       commandText = wake.remainder;
 
       if (!commandText) {
@@ -1471,6 +1482,7 @@ function attachWakeGatedLiveReceiver(
       if (
         !current ||
         current !== session ||
+        session.engine !== 'live' ||
         !session.live ||
         !canListenToSpeaker(
           session,

@@ -11,6 +11,7 @@ import {
 import { env } from './config.js';
 import { transcribeDiscordAttachment } from './services/stt.js';
 import { getPreference, updatePreference } from './storage/preferences.js';
+import { getUserPersonalization, setUserPersonalization } from './services/userPersonalization.js';
 import { createTranslationSession, createTranslationTextSession, getTranslationSession } from './services/translationSessions.js';
 import { createSpeechSession, getSpeechSession } from './services/speechSessions.js';
 import { generateGeminiSpeech, geminiTtsConfigured } from './services/geminiTts.js';
@@ -22,7 +23,7 @@ function userIdOf(interaction: DiscordInteraction): string {
   return id;
 }
 
-function option<T extends string | boolean>(interaction: DiscordInteraction, name: string): T | undefined {
+function option<T extends string | boolean | number>(interaction: DiscordInteraction, name: string): T | undefined {
   return interaction.data?.options?.find((item) => item.name === name)?.value as T | undefined;
 }
 
@@ -470,44 +471,61 @@ export function handleListenTts(interaction: DiscordInteraction): void {
 
 export async function handleSettings(interaction: DiscordInteraction): Promise<Record<string, unknown>> {
   const userId = userIdOf(interaction);
-  const quickTranslate = option<boolean>(interaction, 'quick_translate');
-  const translateTarget = option<string>(interaction, 'translate_target');
+  const autoTranslate = option<boolean>(interaction, 'auto_translate') ?? option<boolean>(interaction, 'quick_translate');
   const myLanguage = option<string>(interaction, 'my_language') ?? option<string>(interaction, 'incoming');
   const outgoing = option<string>(interaction, 'outgoing');
-  const provider = option<string>(interaction, 'provider') as TranslationProvider | 'default' | undefined;
   const style = option<string>(interaction, 'style') as TranslationStyle | undefined;
+  const wakeName = option<string>(interaction, 'wake_name');
+  const followupSeconds = option<number>(interaction, 'followup_seconds');
 
   const hasUpdates =
-    quickTranslate !== undefined ||
-    Boolean(translateTarget) ||
+    autoTranslate !== undefined ||
     Boolean(myLanguage) ||
     Boolean(outgoing) ||
-    Boolean(provider) ||
-    Boolean(style);
+    Boolean(style) ||
+    Boolean(wakeName) ||
+    followupSeconds !== undefined;
 
-  const prefs = hasUpdates
-    ? await updatePreference(userId, {
-        ...(quickTranslate !== undefined ? { quick_translate: quickTranslate } : {}),
-        ...(translateTarget ? { translate_target: translateTarget } : {}),
-        ...(myLanguage ? { incoming: myLanguage } : {}),
-        ...(outgoing ? { outgoing } : {}),
-        ...(provider ? { provider } : {}),
-        ...(style ? { style } : {})
-      })
-    : await getPreference(userId);
+  if (hasUpdates) {
+    await updatePreference(userId, {
+      ...(autoTranslate !== undefined ? { autoTranslateToMyLanguage: autoTranslate, quick_translate: autoTranslate } : {}),
+      ...(myLanguage ? { myLanguage, incoming: myLanguage, translate_target: myLanguage } : {}),
+      ...(outgoing ? { outgoing } : {}),
+      ...(style ? { style } : {})
+    });
+
+    await setUserPersonalization(userId, {
+      ...(autoTranslate !== undefined ? { autoTranslateToMyLanguage: autoTranslate } : {}),
+      ...(myLanguage ? { myLanguage } : {}),
+      ...(outgoing ? { outgoingLanguage: outgoing } : {}),
+      ...(style ? { translationStyle: style } : {}),
+      ...(wakeName ? { wakeName } : {}),
+      ...(followupSeconds !== undefined ? { followupWindowMs: followupSeconds * 1000 } : {})
+    });
+  }
+
+  const [prefs, personal] = await Promise.all([
+    getPreference(userId),
+    getUserPersonalization(userId)
+  ]);
 
   return {
     content: [
-      '⚙️ **TD AI — Translation Settings**',
-      `⚡ Quick Translate → **${prefs.quick_translate ? 'ON (Instant)' : 'OFF (Show Menu)'}**`,
-      `🎯 Default Target → **${languageLabel(prefs.translate_target)}**`,
-      `🌍 My language → **${languageLabel(prefs.incoming)}**`,
-      `⬆️ Outgoing default → **${languageLabel(prefs.outgoing)}**`,
-      `🤖 Engine → **${prefs.provider === 'default' ? 'Auto (AI preferred)' : prefs.provider}**`,
-      `✍️ Style → **${prefs.style}**`,
-      `🔊 Listen → **${geminiTtsConfigured() ? `enabled (${env.GEMINI_TTS_VOICE})` : 'not configured'}**`,
+      '⚙️ **TD AI — Settings**',
       '',
-      'Source detection is automatic. With AI enabled, Arabic is classified as Egyptian Arabic or Modern Standard Arabic when possible.'
+      '🌐 **Translation Preferences**',
+      `• Auto Translate To My Language → **${prefs.autoTranslateToMyLanguage ? 'ON (Instant)' : 'OFF (Show Menu)'}**`,
+      `• My Language → **${languageLabel(prefs.myLanguage || prefs.incoming)}**`,
+      `• Default Target → **${languageLabel(prefs.translate_target || prefs.incoming)}**`,
+      `• Outgoing Language → **${languageLabel(prefs.outgoing)}**`,
+      `• Style → **${prefs.style}**`,
+      '',
+      '🎙️ **Voice & Wake Agent**',
+      `• Wake Name → **${personal.wakeName || 'TD'}** (aliases: *يا TD, تي دي, Hey TD*)`,
+      `• Follow-up Window → **${Math.round((personal.followupWindowMs || 5000) / 1000)}s**`,
+      `• Voice → **${personal.voiceName || 'Kore'}**`,
+      '',
+      '💡 *Tip: Change any setting anytime using `/settings <option>`. When Auto Translate is ON, right-clicking a message translates immediately to your language.*'
     ].join('\n'),
     allowed_mentions: { parse: [] }
   };
